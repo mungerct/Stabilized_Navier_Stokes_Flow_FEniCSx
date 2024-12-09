@@ -1,0 +1,8 @@
+fenics-dolfinx 
+mpich 
+pyvista
+scikit-image
+rdp
+gmsh
+python-gmsh
+shapely

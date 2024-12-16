@@ -2,7 +2,7 @@
 
 This is a repo for Stabilized Stokes Flow using FEniCSx by Caleb Munger.
 
-This repo contains code for FEniCSx 0.8.0.0 that takes a black and white .png image as the inlet shape, and than computes the outlet shape (example below)
+This repo contains code for FEniCSx 0.9.0.0 that takes a black and white .png image as the inlet shape, and than computes the outlet shape (example below)
 post prcoessing the image to get the flow profile at the inlet and outlet is done using paraview 12.1. This code can be used to predict the shape of 
 of a fluid at an outlet (assuming no mixing) for low Reynolds number exetrusion flow. 
 

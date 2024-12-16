@@ -4,7 +4,7 @@
 This python file is a stabilized Stokes flow solver that can be used to predict the output shape of 
 low Reynolds number exetrusion flow. The files that are needed are the "image2gmsh3D.py" and
 "image2inlet.py", which are in the "StokesFlow" folder in github. This code is made using FEniCSx
-version 0.0.8, and dolfinX version 0.9.0.0 and solves stabilized Stokes flow.
+version 0.0.9, and dolfinX version 0.9.0.0 and solves stabilized Stokes flow.
 The Grad-Div stabilization method is used to allow Taylor Hood (P2-P1) and lower order (P1-P1) elements 
 can be used becuase of the stabilization parameters. To improve efficiency of the 
 solver, the inlet boundary conditions are fully devolped flow which are generated in the image2inlet.py
@@ -42,8 +42,6 @@ elif len(sys.argv) == 4:
 
 print("Accepted Inputs, Begining Solving Inlet Profiles")
 
-
-
 # ------ Create mesh and inlet velocity profiles ------
 start = time.perf_counter()
 uh_1, msh_1, uh_2, msh_2 = solve_inlet_profiles(img_fname, flowrate_ratio)
@@ -51,9 +49,9 @@ end = time.perf_counter()
 elapsed = end - start
 print(f"Inlet Profile Solved, Starting to Make Mesh. {elapsed:.6f} Seconds to Solve Inlet Profiles")
 start = time.perf_counter()
-mesh = meshgen(img_fname, channel_mesh_size)
-mesh, _, ft = gmshio.model_to_mesh(gmsh.model, MPI.COMM_WORLD, 0, gdim=3)
-# mesh, _, ft = gmshio.read_from_msh("ChannelMesh.msh", MPI.COMM_WORLD, 0, gdim=3)
+msh = meshgen(img_fname, channel_mesh_size)
+msh, _, ft = gmshio.model_to_mesh(gmsh.model, MPI.COMM_WORLD, 0, gdim=3)
+# msh, _, ft = gmshio.read_from_msh("ChannelMesh.msh", MPI.COMM_WORLD, 0, gdim=3)
 ft.name = "Facet markers"
 end = time.perf_counter()
 elapsed = end - start
@@ -61,10 +59,10 @@ print(f"Finished Making Mesh. {elapsed:.6f} Seconds to Make Mesh and Turn it Int
 start = time.perf_counter()
 
 # ------ Create the different finite element spaces ------
-P2 = element("Lagrange", mesh.basix_cell(), 1, shape=(mesh.geometry.dim,)) # Velocity elements for P1-P1
-# P2 = element("Lagrange", mesh.basix_cell(), 2, shape=(mesh.geometry.dim,)) # Velocity elmeents for Taylor-Hood (P2-P1)
-P1 = element("Lagrange", mesh.basix_cell(), 1) # Pressure elements
-V, Q = functionspace(mesh, P2), functionspace(mesh, P1)
+P2 = element("Lagrange", msh.basix_cell(), 1, shape=(msh.geometry.dim,)) # Velocity elements for P1-P1
+# P2 = element("Lagrange", msh.basix_cell(), 2, shape=(msh.geometry.dim,)) # Velocity elmeents for Taylor-Hood (P2-P1)
+P1 = element("Lagrange", msh.basix_cell(), 1) # Pressure elements
+V, Q = functionspace(msh, P2), functionspace(msh, P1)
 print(f"There are this Many Degrees of Freedom in the Pressure Nodes: {Q.dofmap.index_map.size_local}")
 
 
@@ -76,61 +74,59 @@ print(f"There are this Many Degrees of Freedom in the Pressure Nodes: {Q.dofmap.
 #4 wall - all of the walls inside and on the edge of the channel
 #5 fluid - fluid marker for inside the domain, NOT used in boundary conditions'''
 TH = mixed_element([P2, P1]) # Create mixed element
-W = functionspace(mesh, TH)
+W = functionspace(msh, TH)
 # No Slip Wall Boundary Condition
 W0 = W.sub(0)
 Q, _ = W0.collapse()
 noslip = Function(Q) # Creating a function makes a function of zeros, which is what is needed for a no-slip BC
-dofs = fem.locate_dofs_topological((W0, Q), mesh.topology.dim-1, ft.find(4))
+dofs = fem.locate_dofs_topological((W0, Q), msh.topology.dim-1, ft.find(4))
 bc_wall = fem.dirichletbc(noslip, dofs, W0)
 
 # inlet 1 boundary condition (inlet 1 is the inner channel)
-print("\nStarting to Interpolate uh_1")
-''' To interpolate between non-matching meshes in FEniCSx 0.0.8 to set the fully devolped inflow
-boundary condition, the interpolate command needs extra info because the 2 meshes are different sizes and dimensions. 
-In this code I am interpolating between a 2D fully devolped flow solution onto the 3D mesh of the entire channel,
-and the "create_nonmatching_meshes_interpolation_data" is needed.
-This community post has more information about using/debugging interpolation between meshes
-https://fenicsproject.discourse.group/t/interpolation-data-has-wrong-shape-size/15453 '''
-
+'''
+To make the inlet boundary conditions, the solution from the 2D inlet profile is interplotaed onto the 3D domain,
+this reduces the size of the domain required. Here is a link to for an exmaple of interpolation in fenicsx 0.9
+link: https://github.com/FEniCS/dolfinx/blob/9ee46f0925da2930fa76ca046d047a55555dfbff/python/test/unit/fem/test_interpolation.py#L913
+'''
 uh_1.x.scatter_forward()
-inlet_1_velocity = Function(Q)
-inlet_1_velocity.interpolate(
-    uh_1,
-    nmm_interpolation_data=fem.create_nonmatching_meshes_interpolation_data(
-        inlet_1_velocity.function_space.mesh,
-        inlet_1_velocity.function_space.element,
-        uh_1.function_space.mesh,
-        padding=1.0e-6,
-    ),
-)
+inlet_1_velocity = fem.Function(Q)
+
+msh_cell_map = msh.topology.index_map(msh.topology.dim)
+num_cells_on_proc = msh_cell_map.size_local + msh_cell_map.num_ghosts
+cells = np.arange(num_cells_on_proc, dtype=np.int32)
+
+interpolation_data = fem.create_interpolation_data(inlet_1_velocity.function_space, uh_1.function_space,
+        cells, padding=1.0e-6)
+
+inlet_1_velocity.interpolate_nonmatching(uh_1, cells, interpolation_data)
+
 print("Finished Interpolating uh_1")
-dofs = fem.locate_dofs_topological((W0, Q), mesh.topology.dim-1, ft.find(1))
+dofs = fem.locate_dofs_topological((W0, Q), msh.topology.dim-1, ft.find(1))
 bc_inlet_1 = dirichletbc(inlet_1_velocity, dofs, W0)
 
 # interpolate inlet 2 boundary condition
 print("\nStarting to Interpolate uh_2")
 uh_2.x.scatter_forward()
-inlet_2_velocity = Function(Q)
-inlet_2_velocity.interpolate(
-    uh_2,
-    nmm_interpolation_data=fem.create_nonmatching_meshes_interpolation_data(
-        inlet_2_velocity.function_space.mesh,
-        inlet_2_velocity.function_space.element,
-        uh_2.function_space.mesh,
-        padding=1.0e-6,
-    ),
-)
+inlet_2_velocity = fem.Function(Q)
+
+msh_cell_map = msh.topology.index_map(msh.topology.dim)
+num_cells_on_proc = msh_cell_map.size_local + msh_cell_map.num_ghosts
+cells = np.arange(num_cells_on_proc, dtype=np.int32)
+
+interpolation_data = fem.create_interpolation_data(inlet_2_velocity.function_space, uh_2.function_space,
+        cells, padding=1.0e-6)
+
+inlet_2_velocity.interpolate_nonmatching(uh_2, cells, interpolation_data)
 print("Finished Interpolating uh_2")
 
 # Inlet 2 Velocity Boundary Condition (inlet 2 is the outer channel)
-dofs = fem.locate_dofs_topological((W0, Q), mesh.topology.dim-1, ft.find(2))
+dofs = fem.locate_dofs_topological((W0, Q), msh.topology.dim-1, ft.find(2))
 bc_inlet_2 = dirichletbc(inlet_2_velocity, dofs, W0)
 
 W0 = W.sub(1)
 Q, _ = W0.collapse()
 # Outlet Pressure Condition
-dofs = fem.locate_dofs_topological((W0), mesh.topology.dim-1, ft.find(3))
+dofs = fem.locate_dofs_topological((W0), msh.topology.dim-1, ft.find(3))
 bc_outlet = dirichletbc(PETSc.ScalarType(0), dofs, W0)
 print("\nStart to Combine Boundary Conditions")
 bcs = [bc_wall, bc_inlet_1, bc_inlet_2, bc_outlet]
@@ -147,7 +143,7 @@ Q, _ = W0.collapse()
 f = Function(Q)
 
 # Stabilization parameters per Andre Massing
-h = ufl.CellDiameter(mesh)
+h = ufl.CellDiameter(msh)
 Beta = 0.2
 mu_T = Beta*h*h # Stabilization coefficient
 a = inner(grad(u), grad(v)) * dx
@@ -197,19 +193,19 @@ from dolfinx.io import XDMFFile
 from basix.ufl import element as VectorElement
 with XDMFFile(MPI.COMM_WORLD, "StokesChannelPressure.xdmf", "w") as pfile_xdmf:
     p.x.scatter_forward()
-    P3 = VectorElement("Lagrange", mesh.basix_cell(), 1)
-    u1 = Function(functionspace(mesh, P3))
+    P3 = VectorElement("Lagrange", msh.basix_cell(), 1)
+    u1 = Function(functionspace(msh, P3))
     u1.interpolate(p)
     u1.name = 'Pressure'
-    pfile_xdmf.write_mesh(mesh)
+    pfile_xdmf.write_mesh(msh)
     pfile_xdmf.write_function(u1)
 
 # Save the velocity field
 with XDMFFile(MPI.COMM_WORLD, "StokesChannelVelocity.xdmf", "w") as pfile_xdmf:
     u.x.scatter_forward()
-    P4 = VectorElement("Lagrange", mesh.basix_cell(), 1, shape=(mesh.geometry.dim,))
-    u2 = Function(functionspace(mesh, P4))
+    P4 = VectorElement("Lagrange", msh.basix_cell(), 1, shape=(msh.geometry.dim,))
+    u2 = Function(functionspace(msh, P4))
     u2.interpolate(u)
     u2.name = 'Velocity'
-    pfile_xdmf.write_mesh(mesh)
+    pfile_xdmf.write_mesh(msh)
     pfile_xdmf.write_function(u2)

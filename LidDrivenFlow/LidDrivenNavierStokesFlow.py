@@ -3,18 +3,16 @@ from petsc4py import PETSc
 import numpy as np
 import ufl
 from basix.ufl import element, mixed_element
-from dolfinx import fem, la
-from dolfinx.fem import (Constant, Function, dirichletbc,
-                         extract_function_spaces, form, functionspace,
-                         locate_dofs_topological)
-from dolfinx.fem.petsc import assemble_matrix_block, assemble_vector_block
+from dolfinx import log
+from dolfinx.fem import Function, dirichletbc, functionspace, locate_dofs_topological, locate_dofs_geometrical
 from dolfinx.io import XDMFFile
 from dolfinx.mesh import CellType, create_rectangle, locate_entities_boundary
-from ufl import div, dx, grad, inner
+from ufl import div, dx, grad, inner, dot, nabla_grad
+from mpi4py import MPI
 
 # Create mesh
 msh = create_rectangle(MPI.COMM_WORLD, [np.array([0, 0]), np.array([1, 1])],
-                       [64, 64], CellType.triangle)
+                       [16, 16], CellType.triangle)
 
 
 # Function to mark x = 0, x = 1 and y = 0
@@ -55,14 +53,63 @@ facets = locate_entities_boundary(msh, 1, lid)
 dofs = locate_dofs_topological((W.sub(0), W0), 1, facets)
 bc1 = dirichletbc(lid_velocity, dofs, W.sub(0))
 
-bcs = [bc0, bc1]
+zero = Function(Q)
+dofs = locate_dofs_geometrical(
+    (W.sub(1), Q), lambda x: np.isclose(x.T, [0, 0, 0]).all(axis=1))
+bc2 = dirichletbc(zero, dofs, W.sub(1))
+
+bcs = [bc0, bc1, bc2]
 
 # ------ Create/Define weak form ------
 W0 = W.sub(0)
 Q, _ = W0.collapse()
-(u, p) = ufl.TrialFunctions(W)
+w = Function(W)
+(u, p) = ufl.split(w)
 (v, q) = ufl.TestFunctions(W)
 f = Function(Q)
+
+nu = 100 # Viscocity (Reynolds number equals 1/nu)
+a = inner(dot(u, nabla_grad(u)),v) * dx # Advection
+a += nu*inner(grad(u),grad(v)) * dx # Diffusion
+a -= inner(p,div(v)) * dx # Pressure
+a -= inner(q,div(u)) * dx # Incompressibility
+
+dw = ufl.TrialFunction(W)
+dF = ufl.derivative(a, w, dw)
+
+from dolfinx.fem.petsc import NonlinearProblem
+problem = NonlinearProblem(a, w, bcs=bcs, J=dF)
+from dolfinx.nls.petsc import NewtonSolver
+
+solver = (MPI.COMM_WORLD, problem)
+log.set_log_level(log.LogLevel.INFO)
+
+ksp = solver.krylov_solver
+opts = PETSc.Options()
+option_prefix = ksp.getOptionsPrefix()
+opts[f"{option_prefix}ksp_type"] = "cg"
+opts[f"{option_prefix}pc_type"] = "gamg"
+opts[f"{option_prefix}pc_factor_mat_solver_type"] = "mumps"
+ksp.setFromOptions()
+
+# Compute the solution
+solver.solve(w)
+
+# Split the mixed solution and collapse
+u = w.sub(0).collapse()
+p = w.sub(1).collapse()
+
+'''
+from dolfinx.fem.petsc import NonlinearProblem # https://fenicsproject.discourse.group/t/error-in-solving-steady-navier-stokes-equation/10224
+problem = NonlinearProblem(a, L, bcs)
+from dolfinx.nls.petsc import NewtonSolver
+
+solver = NewtonSolver(MPI.COMM_WORLD, problem)
+solver.convergence_criterion = "incremental"
+solver.rtol = 1e-6
+solver.report = True
+
+log.set_log_level(log.LogLevel.INFO)
 
 # Stabilization parameters per Andre Massing
 h = ufl.CellDiameter(msh)
@@ -80,39 +127,5 @@ from dolfinx.fem.petsc import LinearProblem
 problem = LinearProblem(a, L, bcs = bcs, petsc_options={'ksp_type': 'bcgs', 'ksp_rtol':1e-10, 'ksp_atol':1e-10})
 U = Function(W)
 U = problem.solve() # Solve the problem
-
-# ------ Split the mixed solution and collapse ------
-u, p = U.sub(0).collapse(), U.sub(1).collapse()
-# Compute norms
-norm_u, norm_p = la.norm(u.x), la.norm(p.x)
-norm_inf_u, inf_norm_p = la.norm(u.x, type=la.Norm.linf), la.norm(p.x, type=la.Norm.linf)
-if MPI.COMM_WORLD.rank == 0:
-    print(f"\nL2 Norm of velocity coefficient vector: {norm_u}")
-    print(f"Infinite Norm of velocity coefficient vector: {norm_inf_u}")
-    print(f"L2 Norm of pressure coefficient vector: {norm_p}")
-    print(f"Infinite Norm of pressure coefficient vector: {inf_norm_p}")
-
-print("\nFinished Solving, Saving Solution Field")
-
-# ------ Save the solutions to both a .xdmf and .h5 file
-# Save the pressure field
-from dolfinx.io import XDMFFile
-from basix.ufl import element as VectorElement
-with XDMFFile(MPI.COMM_WORLD, "StokesLidDrivenPressure.xdmf", "w") as pfile_xdmf:
-    p.x.scatter_forward()
-    P3 = VectorElement("Lagrange", msh.basix_cell(), 1)
-    u1 = Function(functionspace(msh, P3))
-    u1.interpolate(p)
-    u1.name = 'Pressure'
-    pfile_xdmf.write_mesh(msh)
-    pfile_xdmf.write_function(u1)
-
-# Save the velocity field
-with XDMFFile(MPI.COMM_WORLD, "StokesLidDrivenVelocity.xdmf", "w") as pfile_xdmf:
-    u.x.scatter_forward()
-    P4 = VectorElement("Lagrange", msh.basix_cell(), 1, shape=(msh.geometry.dim,))
-    u2 = Function(functionspace(msh, P4))
-    u2.interpolate(u)
-    u2.name = 'Velocity'
-    pfile_xdmf.write_mesh(msh)
-    pfile_xdmf.write_function(u2)
+print('Solved Stokes Flow')
+'''

@@ -3,3 +3,4 @@
 *.h5
 *.msh
 *.ipynb_checkpoints
+*.geo_unrolled

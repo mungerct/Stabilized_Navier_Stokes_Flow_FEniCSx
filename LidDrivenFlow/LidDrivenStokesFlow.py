@@ -65,16 +65,17 @@ Q, _ = W0.collapse()
 f = Function(Q)
 
 # Stabilization parameters per Andre Massing
+nu = 0.01
 h = ufl.CellDiameter(msh)
-Beta = 0.2
-mu_T = Beta*h*h # Stabilization coefficient
-a = inner(grad(u), grad(v)) * dx
+a0 = 1/3
+mu_T = a0*h*h/(4*nu) # Stabilization coefficient
+a = nu*inner(grad(u), grad(v)) * dx
 a -= inner(p, div(v)) * dx
 a += inner(div(u), q) * dx
-a += mu_T*inner(grad(p), grad(q)) * dx # Stabilization term
+a += mu_T*inner(grad(p), grad(q)) * dx # GLS stabilization term
 
 L = inner(f,v) * dx
-L -= mu_T * inner(f, grad(q)) * dx # Stabilization  term
+L -= mu_T * inner(f, grad(q)) * dx # GLS stabilization  term
 
 from dolfinx.fem.petsc import LinearProblem
 problem = LinearProblem(a, L, bcs = bcs, petsc_options={'ksp_type': 'bcgs', 'ksp_rtol':1e-10, 'ksp_atol':1e-10})
@@ -98,7 +99,7 @@ print("\nFinished Solving, Saving Solution Field")
 # Save the pressure field
 from dolfinx.io import XDMFFile
 from basix.ufl import element as VectorElement
-with XDMFFile(MPI.COMM_WORLD, "StokesLidDrivenPressure.xdmf", "w") as pfile_xdmf:
+with XDMFFile(MPI.COMM_WORLD, "StokesLidDrivenPressureHighRe.xdmf", "w") as pfile_xdmf:
     p.x.scatter_forward()
     P3 = VectorElement("Lagrange", msh.basix_cell(), 1)
     u1 = Function(functionspace(msh, P3))
@@ -108,7 +109,7 @@ with XDMFFile(MPI.COMM_WORLD, "StokesLidDrivenPressure.xdmf", "w") as pfile_xdmf
     pfile_xdmf.write_function(u1)
 
 # Save the velocity field
-with XDMFFile(MPI.COMM_WORLD, "StokesLidDrivenVelocity.xdmf", "w") as pfile_xdmf:
+with XDMFFile(MPI.COMM_WORLD, "StokesLidDrivenVelocityHighRe.xdmf", "w") as pfile_xdmf:
     u.x.scatter_forward()
     P4 = VectorElement("Lagrange", msh.basix_cell(), 1, shape=(msh.geometry.dim,))
     u2 = Function(functionspace(msh, P4))

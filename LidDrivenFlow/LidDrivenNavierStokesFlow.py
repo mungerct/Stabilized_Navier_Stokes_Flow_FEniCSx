@@ -5,14 +5,13 @@ import ufl
 from basix.ufl import element, mixed_element
 from dolfinx import log
 from dolfinx.fem import Function, dirichletbc, functionspace, locate_dofs_topological, locate_dofs_geometrical
-from dolfinx.io import XDMFFile
 from dolfinx.mesh import CellType, create_rectangle, locate_entities_boundary
 from ufl import div, dx, grad, inner, dot, nabla_grad
 from mpi4py import MPI
 
 # Create mesh
 msh = create_rectangle(MPI.COMM_WORLD, [np.array([0, 0]), np.array([1, 1])],
-                       [16, 16], CellType.triangle)
+                       [128, 128], CellType.triangle)
 
 
 # Function to mark x = 0, x = 1 and y = 0
@@ -29,10 +28,10 @@ def lid(x):
 def lid_velocity_expression(x):
     return np.stack((np.ones(x.shape[1]), np.zeros(x.shape[1])))
 
-P2 = element("Lagrange", msh.basix_cell(), 1, shape=(msh.geometry.dim,)) # Velocity elements for P1-P1
-# P2 = element("Lagrange", msh.basix_cell(), 2, shape=(msh.geometry.dim,)) # Velocity elmeents for Taylor-Hood (P2-P1)
+# P2 = element("Lagrange", msh.basix_cell(), 1, shape=(msh.geometry.dim,)) # Velocity elements for P1-P1
+P2 = element("Lagrange", msh.basix_cell(), 2, shape=(msh.geometry.dim,)) # Velocity elmeents for Taylor-Hood (P2-P1)
 P1 = element("Lagrange", msh.basix_cell(), 1) # Pressure elements
-V, Q = functionspace(msh, P2), functionspace(msh, P1)
+V, Q = functionspace(msh, P2), functionspace(msh, P1) # V is velocity space, Q is pressure space
 print(f"There are this Many Degrees of Freedom in the Pressure Nodes: {Q.dofmap.index_map.size_local}")
 
 # Create the Taylor-Hood function space
@@ -53,6 +52,7 @@ facets = locate_entities_boundary(msh, 1, lid)
 dofs = locate_dofs_topological((W.sub(0), W0), 1, facets)
 bc1 = dirichletbc(lid_velocity, dofs, W.sub(0))
 
+# Create 0 pressure boundary condition at 0,0
 zero = Function(Q)
 dofs = locate_dofs_geometrical(
     (W.sub(1), Q), lambda x: np.isclose(x.T, [0, 0, 0]).all(axis=1))
@@ -60,15 +60,45 @@ bc2 = dirichletbc(zero, dofs, W.sub(1))
 
 bcs = [bc0, bc1, bc2]
 
-# ------ Create/Define weak form ------
-W0 = W.sub(0)
-Q, _ = W0.collapse()
+# Create stokes flow solution
+W0_Stokes = W.sub(0)
+V_Stokes, _ = W0_Stokes.collapse()
+(u, p) = ufl.TrialFunctions(W)
+(v, q) = ufl.TestFunctions(W)
+f = Function(V_Stokes)
+
+# Stabilization parameters per Andre Massing
+Re = 400 # Reynolds number
+nu = 1/Re # Viscocity (Reynolds number equals 1/nu)
+h = ufl.CellDiameter(msh)
+a0 = 1/3
+mu_T = a0*h*h/(4*nu) # Stabilization coefficient
+
+dx = ufl.dx(metadata={'quadrature_degree':2})
+a = nu*inner(grad(u), grad(v)) * dx
+a -= inner(p, div(v)) * dx
+a += inner(div(u), q) * dx
+a += mu_T*inner(grad(p), grad(q)) * dx # Stabilization term
+
+L = inner(f, v) * dx
+L -= mu_T * inner(f, grad(q)) * dx # Stabilization  term
+
+from dolfinx.fem.petsc import LinearProblem
+problem = LinearProblem(a, L, bcs = bcs, petsc_options={'ksp_type': 'bcgs', 'ksp_rtol':1e-10, 'ksp_atol':1e-10})
+U = Function(W)
+U = problem.solve() # Solve the problem
+print('Solved Stokes Flow')
+
+# ------ Create/Define weak form of Navier-Stokes Equations ------
+del u, v, p, q, a, L, problem, f, mu_T # Clear Stokes flow variables to prevent errors
+
+W0_NS = W.sub(0)
+V_NS, _ = W0_NS.collapse()
 w = Function(W)
 (u, p) = ufl.split(w)
 (v, q) = ufl.TestFunctions(W)
-f = Function(Q)
+f = Function(V_NS)
 
-nu = 100 # Viscocity (Reynolds number equals 1/nu)
 a = inner(dot(u, nabla_grad(u)),v) * dx # Advection
 a += nu*inner(grad(u),grad(v)) * dx # Diffusion
 a -= inner(p,div(v)) * dx # Pressure
@@ -77,55 +107,54 @@ a -= inner(q,div(u)) * dx # Incompressibility
 dw = ufl.TrialFunction(W)
 dF = ufl.derivative(a, w, dw)
 
+w.interpolate(U)
+
 from dolfinx.fem.petsc import NonlinearProblem
 problem = NonlinearProblem(a, w, bcs=bcs, J=dF)
 from dolfinx.nls.petsc import NewtonSolver
 
-solver = (MPI.COMM_WORLD, problem)
+solver = NewtonSolver(MPI.COMM_WORLD, problem)
+solver.convergence_criterion = "incremental"
+solver.rtol = 1e-9
+solver.report = True
+
 log.set_log_level(log.LogLevel.INFO)
 
 ksp = solver.krylov_solver
 opts = PETSc.Options()
 option_prefix = ksp.getOptionsPrefix()
-opts[f"{option_prefix}ksp_type"] = "cg"
-opts[f"{option_prefix}pc_type"] = "gamg"
+opts[f"{option_prefix}ksp_type"] = "preonly"
 opts[f"{option_prefix}pc_factor_mat_solver_type"] = "mumps"
 ksp.setFromOptions()
 
 # Compute the solution
 solver.solve(w)
+log.set_log_level(log.LogLevel.WARNING)
 
 # Split the mixed solution and collapse
-u = w.sub(0).collapse()
-p = w.sub(1).collapse()
+u = w.sub(0).collapse() # Velocity
+p = w.sub(1).collapse() # Pressure
 
-'''
-from dolfinx.fem.petsc import NonlinearProblem # https://fenicsproject.discourse.group/t/error-in-solving-steady-navier-stokes-equation/10224
-problem = NonlinearProblem(a, L, bcs)
-from dolfinx.nls.petsc import NewtonSolver
+# ------ Save the solutions to both a .xdmf and .h5 file
+# Save the pressure field
+from dolfinx.io import XDMFFile
+from basix.ufl import element as VectorElement
 
-solver = NewtonSolver(MPI.COMM_WORLD, problem)
-solver.convergence_criterion = "incremental"
-solver.rtol = 1e-6
-solver.report = True
+with XDMFFile(MPI.COMM_WORLD, "NavierStokesLidDrivenPressureRe400.xdmf", "w") as pfile_xdmf:
+    p.x.scatter_forward()
+    P3 = VectorElement("Lagrange", msh.basix_cell(), 1)
+    u1 = Function(functionspace(msh, P3))
+    u1.interpolate(p)
+    u1.name = 'Pressure'
+    pfile_xdmf.write_mesh(msh)
+    pfile_xdmf.write_function(u1)
 
-log.set_log_level(log.LogLevel.INFO)
-
-# Stabilization parameters per Andre Massing
-h = ufl.CellDiameter(msh)
-Beta = 0.2
-mu_T = Beta*h*h # Stabilization coefficient
-a = inner(grad(u), grad(v)) * dx
-a -= inner(p, div(v)) * dx
-a += inner(div(u), q) * dx
-a += mu_T*inner(grad(p), grad(q)) * dx # Stabilization term
-
-L = inner(f,v) * dx
-L -= mu_T * inner(f, grad(q)) * dx # Stabilization  term
-
-from dolfinx.fem.petsc import LinearProblem
-problem = LinearProblem(a, L, bcs = bcs, petsc_options={'ksp_type': 'bcgs', 'ksp_rtol':1e-10, 'ksp_atol':1e-10})
-U = Function(W)
-U = problem.solve() # Solve the problem
-print('Solved Stokes Flow')
-'''
+# Save the velocity field
+with XDMFFile(MPI.COMM_WORLD, "NavierStokesLidDrivenVelocityRe400.xdmf", "w") as pfile_xdmf:
+    u.x.scatter_forward()
+    P4 = VectorElement("Lagrange", msh.basix_cell(), 1, shape=(msh.geometry.dim,))
+    u2 = Function(functionspace(msh, P4))
+    u2.interpolate(u)
+    u2.name = 'Velocity'
+    pfile_xdmf.write_mesh(msh)
+    pfile_xdmf.write_function(u2)

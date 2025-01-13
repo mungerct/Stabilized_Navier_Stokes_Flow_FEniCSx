@@ -3,10 +3,10 @@ from petsc4py import PETSc
 import numpy as np
 import ufl
 from basix.ufl import element, mixed_element
-from dolfinx import log
+from dolfinx import log 
 from dolfinx.fem import Function, dirichletbc, functionspace, locate_dofs_topological, locate_dofs_geometrical
 from dolfinx.mesh import CellType, create_rectangle, locate_entities_boundary
-from ufl import div, dx, grad, inner, dot, nabla_grad
+from ufl import div, dx, grad, inner, dot, nabla_grad, sym, sqrt, conditional, le
 from mpi4py import MPI
 
 # Create mesh
@@ -32,7 +32,8 @@ def lid_velocity_expression(x):
 P2 = element("Lagrange", msh.basix_cell(), 2, shape=(msh.geometry.dim,)) # Velocity elmeents for Taylor-Hood (P2-P1)
 P1 = element("Lagrange", msh.basix_cell(), 1) # Pressure elements
 V, Q = functionspace(msh, P2), functionspace(msh, P1) # V is velocity space, Q is pressure space
-print(f"There are this Many Degrees of Freedom in the Pressure Nodes: {Q.dofmap.index_map.size_local}")
+print(f"Pressure Degress of Freedom: {Q.dofmap.index_map.size_local}")
+print(f"Velocity Degress of Freedom: {V.dofmap.index_map.size_local}")
 
 # Create the Taylor-Hood function space
 TH = mixed_element([P2, P1])
@@ -68,7 +69,7 @@ V_Stokes, _ = W0_Stokes.collapse()
 f = Function(V_Stokes)
 
 # Stabilization parameters per Andre Massing
-Re = 400 # Reynolds number
+Re = 100 # Reynolds number
 nu = 1/Re # Viscocity (Reynolds number equals 1/nu)
 h = ufl.CellDiameter(msh)
 a0 = 1/3
@@ -86,7 +87,9 @@ L -= mu_T * inner(f, grad(q)) * dx # Stabilization  term
 from dolfinx.fem.petsc import LinearProblem
 problem = LinearProblem(a, L, bcs = bcs, petsc_options={'ksp_type': 'bcgs', 'ksp_rtol':1e-10, 'ksp_atol':1e-10})
 U = Function(W)
+log.set_log_level(log.LogLevel.INFO)
 U = problem.solve() # Solve the problem
+log.set_log_level(log.LogLevel.WARNING)
 print('Solved Stokes Flow')
 
 # ------ Create/Define weak form of Navier-Stokes Equations ------
@@ -99,15 +102,42 @@ w = Function(W)
 (v, q) = ufl.TestFunctions(W)
 f = Function(V_NS)
 
+# Stabiliztion parameter from "CALCULATION OF THE STABILIZATION PARAMETERS IN FINITE ELEMENT FORMULATIONS OF FLOW PROBLEMS"
+# By Tayfun E. Tezduyar, used the UGN based parameters found in section 7 of his paper, for more information about finite elemnet
+# stabilization, see the youtube playlist by Dr. Stein Stoter, https://www.youtube.com/playlist?list=PLMHTjE57oyvpkTPG8ON1w6BChBoapsZTA
+
+r = 2
+
+# SUPG
+u_norm = sqrt(dot(u,u))
+tau_SUNG1 = h/(2*u_norm)
+tau_SUNG3 = h*h/(4*nu)
+tau_SUPG = (1/(tau_SUNG1**r)+1/(tau_SUNG3**r))**(-1/r)
+
+# LSIC
+Re_UGN = u_norm*h/(2*nu)
+z = conditional((le(Re_UGN, 3)), Re_UGN/3, 1)
+tau_LSIC = h/2*u_norm*z
+
+# PSPG
+del u_norm
+u_norm = 1
+tau_SUNG1 = h/(2*u_norm)
+tau_SUNG3 = h*h/(4*nu)
+tau_PSPG = (1/(tau_SUNG1**r)+1/(tau_SUNG3**r))**(-1/r)*10000
+
 a = inner(dot(u, nabla_grad(u)),v) * dx # Advection
 a += nu*inner(grad(u),grad(v)) * dx # Diffusion
 a -= inner(p,div(v)) * dx # Pressure
 a -= inner(q,div(u)) * dx # Incompressibility
+# a += tau_SUPG*inner(dot(u, nabla_grad(v)), dot(u, nabla_grad(u)) - nu*div(sym(grad(u))) + grad(p)) * dx # SUPG
+# a += tau_PSPG*inner(grad(q), dot(u, nabla_grad(u)) - nu*div(sym(grad(u))) + grad(p)) * dx # PSPG
+a += tau_LSIC*inner(div(v), div(u)) * dx # LSIC
 
 dw = ufl.TrialFunction(W)
 dF = ufl.derivative(a, w, dw)
 
-w.interpolate(U)
+w.interpolate(U) # Interpolate the Stokes flow solution to set as intial condition for Navier-Stokes flow
 
 from dolfinx.fem.petsc import NonlinearProblem
 problem = NonlinearProblem(a, w, bcs=bcs, J=dF)
@@ -140,7 +170,7 @@ p = w.sub(1).collapse() # Pressure
 from dolfinx.io import XDMFFile
 from basix.ufl import element as VectorElement
 
-with XDMFFile(MPI.COMM_WORLD, "NavierStokesLidDrivenPressureRe400.xdmf", "w") as pfile_xdmf:
+with XDMFFile(MPI.COMM_WORLD, "NavierStokesLidDrivenPressureRe100LSIC.xdmf", "w") as pfile_xdmf:
     p.x.scatter_forward()
     P3 = VectorElement("Lagrange", msh.basix_cell(), 1)
     u1 = Function(functionspace(msh, P3))
@@ -150,7 +180,7 @@ with XDMFFile(MPI.COMM_WORLD, "NavierStokesLidDrivenPressureRe400.xdmf", "w") as
     pfile_xdmf.write_function(u1)
 
 # Save the velocity field
-with XDMFFile(MPI.COMM_WORLD, "NavierStokesLidDrivenVelocityRe400.xdmf", "w") as pfile_xdmf:
+with XDMFFile(MPI.COMM_WORLD, "NavierStokesLidDrivenVelocityRe100LSIC.xdmf", "w") as pfile_xdmf:
     u.x.scatter_forward()
     P4 = VectorElement("Lagrange", msh.basix_cell(), 1, shape=(msh.geometry.dim,))
     u2 = Function(functionspace(msh, P4))

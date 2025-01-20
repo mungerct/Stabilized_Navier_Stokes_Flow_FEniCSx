@@ -1,3 +1,4 @@
+#!/usr/bin/env python
 from mpi4py import MPI
 from petsc4py import PETSc
 import numpy as np
@@ -8,17 +9,29 @@ from dolfinx.fem import Function, dirichletbc, functionspace, locate_dofs_topolo
 from dolfinx.mesh import CellType, create_rectangle, locate_entities_boundary
 from ufl import div, dx, grad, inner, dot, nabla_grad, sym, sqrt, conditional, le
 from mpi4py import MPI
+import time
+import sys
+
+
+if len(sys.argv) == 3:
+    Re = int(sys.argv[1])
+    NumCells = int(sys.argv[2])
+
+elif len(sys.argv) == 2:
+    Re = int(sys.argv[1])
+    NumCells = 64
+
+if MPI.COMM_WORLD.rank == 0:
+    tstart = time.time()
 
 # Create mesh
 msh = create_rectangle(MPI.COMM_WORLD, [np.array([0, 0]), np.array([1, 1])],
-                       [128, 128], CellType.triangle)
-
+                    [NumCells, NumCells], CellType.triangle)
 
 # Function to mark x = 0, x = 1 and y = 0
 def noslip_boundary(x):
     return np.logical_or(np.logical_or(np.isclose(x[0], 0.0), np.isclose(x[0], 1.0)),
-                         np.isclose(x[1], 0.0))
-
+                        np.isclose(x[1], 0.0))
 
 # Function to mark the lid (y = 1)
 def lid(x):
@@ -28,12 +41,13 @@ def lid(x):
 def lid_velocity_expression(x):
     return np.stack((np.ones(x.shape[1]), np.zeros(x.shape[1])))
 
-# P2 = element("Lagrange", msh.basix_cell(), 1, shape=(msh.geometry.dim,)) # Velocity elements for P1-P1
-P2 = element("Lagrange", msh.basix_cell(), 2, shape=(msh.geometry.dim,)) # Velocity elmeents for Taylor-Hood (P2-P1)
+P2 = element("Lagrange", msh.basix_cell(), 1, shape=(msh.geometry.dim,)) # Velocity elements for P1-P1
+# P2 = element("Lagrange", msh.basix_cell(), 2, shape=(msh.geometry.dim,)) # Velocity elmeents for Taylor-Hood (P2-P1)
 P1 = element("Lagrange", msh.basix_cell(), 1) # Pressure elements
 V, Q = functionspace(msh, P2), functionspace(msh, P1) # V is velocity space, Q is pressure space
-print(f"Pressure Degress of Freedom: {Q.dofmap.index_map.size_local}")
-print(f"Velocity Degress of Freedom: {V.dofmap.index_map.size_local}")
+if MPI.COMM_WORLD.rank == 0:
+    print(f"Pressure Degress of Freedom: {Q.dofmap.index_map.size_local}")
+    print(f"Velocity Degress of Freedom: {V.dofmap.index_map.size_local}")
 
 # Create the Taylor-Hood function space
 TH = mixed_element([P2, P1])
@@ -69,7 +83,6 @@ V_Stokes, _ = W0_Stokes.collapse()
 f = Function(V_Stokes)
 
 # Stabilization parameters per Andre Massing
-Re = 100 # Reynolds number
 nu = 1/Re # Viscocity (Reynolds number equals 1/nu)
 h = ufl.CellDiameter(msh)
 a0 = 1/3
@@ -107,31 +120,26 @@ f = Function(V_NS)
 # stabilization, see the youtube playlist by Dr. Stein Stoter, https://www.youtube.com/playlist?list=PLMHTjE57oyvpkTPG8ON1w6BChBoapsZTA
 
 r = 2
-
-# SUPG
+# SUPG and PSPG
 u_norm = sqrt(dot(u,u))
 tau_SUNG1 = h/(2*u_norm)
+inv_tau_SUNG1 = conditional((le(u_norm, 1e-8)), 0, 1/(tau_SUNG1**r))
 tau_SUNG3 = h*h/(4*nu)
-tau_SUPG = (1/(tau_SUNG1**r)+1/(tau_SUNG3**r))**(-1/r)
+tau_SUPG = (inv_tau_SUNG1+1/(tau_SUNG3**r))**(-1/r)
 
 # LSIC
 Re_UGN = u_norm*h/(2*nu)
 z = conditional((le(Re_UGN, 3)), Re_UGN/3, 1)
 tau_LSIC = h/2*u_norm*z
 
-# PSPG
-del u_norm
-u_norm = 1
-tau_SUNG1 = h/(2*u_norm)
-tau_SUNG3 = h*h/(4*nu)
-tau_PSPG = (1/(tau_SUNG1**r)+1/(tau_SUNG3**r))**(-1/r)*10000
 
 a = inner(dot(u, nabla_grad(u)),v) * dx # Advection
 a += nu*inner(grad(u),grad(v)) * dx # Diffusion
 a -= inner(p,div(v)) * dx # Pressure
-a -= inner(q,div(u)) * dx # Incompressibility
-# a += tau_SUPG*inner(dot(u, nabla_grad(v)), dot(u, nabla_grad(u)) - nu*div(sym(grad(u))) + grad(p)) * dx # SUPG
-# a += tau_PSPG*inner(grad(q), dot(u, nabla_grad(u)) - nu*div(sym(grad(u))) + grad(p)) * dx # PSPG
+a += inner(q,div(u)) * dx # Incompressibility
+res = dot(u, nabla_grad(u)) - nu*div(sym(grad(u))) + grad(p) # Momentum residual
+a += tau_SUPG*inner(dot(u, nabla_grad(v)), res) * dx # SUPG
+a += tau_SUPG*inner(grad(q), res) * dx # PSPG
 a += tau_LSIC*inner(div(v), div(u)) * dx # LSIC
 
 dw = ufl.TrialFunction(W)
@@ -165,12 +173,16 @@ log.set_log_level(log.LogLevel.WARNING)
 u = w.sub(0).collapse() # Velocity
 p = w.sub(1).collapse() # Pressure
 
+tstop = time.time()
+if MPI.COMM_WORLD.rank == 0:
+    print(f"run time = {tstop - tstart: 0.2f} sec")
+
 # ------ Save the solutions to both a .xdmf and .h5 file
 # Save the pressure field
 from dolfinx.io import XDMFFile
 from basix.ufl import element as VectorElement
 
-with XDMFFile(MPI.COMM_WORLD, "NavierStokesLidDrivenPressureRe100LSIC.xdmf", "w") as pfile_xdmf:
+with XDMFFile(MPI.COMM_WORLD, f"NavierStokesLidDrivenPressureLinear{Re}.xdmf", "w") as pfile_xdmf:
     p.x.scatter_forward()
     P3 = VectorElement("Lagrange", msh.basix_cell(), 1)
     u1 = Function(functionspace(msh, P3))
@@ -180,7 +192,7 @@ with XDMFFile(MPI.COMM_WORLD, "NavierStokesLidDrivenPressureRe100LSIC.xdmf", "w"
     pfile_xdmf.write_function(u1)
 
 # Save the velocity field
-with XDMFFile(MPI.COMM_WORLD, "NavierStokesLidDrivenVelocityRe100LSIC.xdmf", "w") as pfile_xdmf:
+with XDMFFile(MPI.COMM_WORLD, f"NavierStokesLidDrivenPressureVelocity{Re}.xdmf", "w") as pfile_xdmf:
     u.x.scatter_forward()
     P4 = VectorElement("Lagrange", msh.basix_cell(), 1, shape=(msh.geometry.dim,))
     u2 = Function(functionspace(msh, P4))

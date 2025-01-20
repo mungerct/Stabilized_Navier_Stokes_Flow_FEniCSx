@@ -153,11 +153,11 @@ a += mu_T*inner(grad(p), grad(q)) * dx # Stabilization term
 
 L = inner(f,v) * dx
 L -= mu_T * inner(f, grad(q)) * dx # Stabilization  term
+
 '''
 For more infromation about stabilizing stokes flow, the papers "Grad-Div Stabilization for Stokes Equations" by Maxim A. Olshanskii
 and "On the parameter of choice in grad-div stabilization for the stokes equations" by Eleanir W. Jenkins are recommended
 '''
-
 
 start = time.perf_counter()
 # ------ Assemble LHS matrix and RHS vector and solve-------

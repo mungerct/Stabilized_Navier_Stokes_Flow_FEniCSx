@@ -22,7 +22,6 @@ def noslip_boundary(x):
     return np.logical_or(np.logical_or(np.isclose(x[0], 0.0), np.isclose(x[0], 1.0)),
                          np.isclose(x[1], 0.0))
 
-
 # Function to mark the lid (y = 1)
 def lid(x):
     return np.isclose(x[1], 1.0)

@@ -11,6 +11,7 @@ from ufl import div, dx, grad, inner, dot, nabla_grad, sym, sqrt, conditional, l
 from mpi4py import MPI
 import time
 import sys
+import os
 
 
 if len(sys.argv) == 3:

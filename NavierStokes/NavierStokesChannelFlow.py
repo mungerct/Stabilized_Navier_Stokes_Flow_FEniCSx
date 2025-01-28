@@ -43,12 +43,16 @@ elif len(sys.argv) == 5:
     flowrate_ratio = float(sys.argv[3])
     channel_mesh_size = float(sys.argv[4]) # optional third argument for the element size of the 3D mesh
 
-FolderName = f'NSChannelFlow_RE{Re}_MeshLC{channel_mesh_size}'
-if not os.path.exists(FolderName):
-    os.makedirs(FolderName)
-
 comm = MPI.COMM_WORLD
 rank = comm.Get_rank()
+
+FolderName = f'NSChannelFlow_RE{Re}_MeshLC{channel_mesh_size}'
+if rank == 0:
+    if not os.path.exists(FolderName):
+        os.makedirs(FolderName)
+
+MPI.COMM_WORLD.Barrier()
+comm.Barrier()
 
 if rank == 0:
     print("Accepted Inputs", flush=True)
@@ -73,6 +77,7 @@ V, Q = functionspace(msh, P2), functionspace(msh, P1)
 
 if rank == 0:
     print(f"Pressure Degrees of Freedom: {Q.dofmap.index_map.size_local}", flush=True)
+    print(f"Velocity Degrees of Freedom: {V.dofmap.index_map.size_local}", flush=True)
 
 
 # ------- Create boundary conditions -------
@@ -153,6 +158,7 @@ if rank == 0:
 
 
 # ------ Create/Define weak form ------
+dx = ufl.dx(metadata={'quadrature_degree':1}) # Reduce to 1 gauss point to increase speed (no loss of accuracy for linear elements)
 W0 = W.sub(0)
 Q, _ = W0.collapse()
 (u, p) = ufl.TrialFunctions(W)
@@ -179,8 +185,10 @@ and "On the parameter of choice in grad-div stabilization for the stokes equatio
 # ------ Assemble LHS matrix and RHS vector and solve-------
 from dolfinx.fem.petsc import LinearProblem
 problem = LinearProblem(a, L, bcs = bcs, petsc_options={'ksp_type': 'bcgs', 'ksp_rtol':1e-10, 'ksp_atol':1e-10})
+log.set_log_level(log.LogLevel.INFO)
 U = Function(W)
 U = problem.solve() # Solve the problem
+log.set_log_level(log.LogLevel.WARNING)
 
 
 # ------ Split the mixed solution and collapse ------
@@ -191,7 +199,6 @@ if rank == 0:
 # ------ Create/Define weak form of Navier-Stokes Equations ------
 del u, v, p, q, a, L, problem, f, mu_T # Clear Stokes flow variables to prevent errors
 
-dx = ufl.dx(metadata={'quadrature_degree':2}) # Reduc eto 2 gauss points to increase speed (no loss of accuracy for linear elements)
 nu = 1/Re
 
 W0_NS = W.sub(0)
@@ -282,6 +289,9 @@ tstop = time.time()
 if rank == 0:
     print(f"run time = {time.time() - tstart: 0.2f} sec", flush=True)
 
+MPI.COMM_WORLD.Barrier()
+if rank == 0:
+    print('Saving files', flush=True)
 
 # ------ Save the solutions to both a .xdmf and .h5 file
 # Save the pressure field
@@ -295,7 +305,6 @@ with XDMFFile(MPI.COMM_WORLD, f"{FolderName}/Re{Re}ChannelPressure.xdmf", "w") a
     u1.name = 'Pressure'
     pfile_xdmf.write_mesh(msh)
     pfile_xdmf.write_function(u1)
-
 
 # Save the velocity field
 with XDMFFile(MPI.COMM_WORLD, f"{FolderName}/Re{Re}ChannelVelocity.xdmf", "w") as pfile_xdmf:
@@ -311,4 +320,12 @@ with open(f"{FolderName}/RunParameters.txt", "w") as file:
     file.write(f"Re={Re}\n")
     file.write(f"img_filename={img_fname}\n")
     file.write(f"Flowrate Ratio={flowrate_ratio}\n")
-    file.write(f"Channel Mesh Size={channel_mesh_size}")
+    file.write(f"Channel Mesh Size={channel_mesh_size}\n")
+    file.write(f"Pressure DOFs: {Q.dofmap.index_map.size_local}\n")
+    file.write(f"Velocity DOFs: {V.dofmap.index_map.size_local}\n")
+    size = comm.Get_size()
+    file.write(f"{size} Cores Used\n")
+    file.write(f"Run Time = {time.time() - tstart: 0.2f} sec\n")
+
+MPI.COMM_WORLD.Barrier()
+MPI.COMM_WORLD.Abort(0)

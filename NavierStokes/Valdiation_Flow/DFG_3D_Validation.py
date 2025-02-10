@@ -176,6 +176,7 @@ a += tau_LSIC*inner(div(v), div(u)) * dx # LSIC
 
 dw = ufl.TrialFunction(W)
 dF = ufl.derivative(a, w, dw)
+w.interpolate(U)
 
 from dolfinx.fem.petsc import NonlinearProblem
 problem = NonlinearProblem(a, w, bcs=bc, J=dF)
@@ -192,6 +193,7 @@ ksp = solver.krylov_solver
 opts = PETSc.Options()
 option_prefix = ksp.getOptionsPrefix()
 opts[f"{option_prefix}ksp_type"] = "preonly"
+# opts[f"{option_prefix}ksp_type"] = "tfqmr"
 opts[f"{option_prefix}pc_factor_mat_solver_type"] = "mumps"
 ksp.setFromOptions()
 

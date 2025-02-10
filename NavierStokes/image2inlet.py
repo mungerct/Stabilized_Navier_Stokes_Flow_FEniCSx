@@ -247,7 +247,7 @@ def solve_velocity_field(gmsh_model):
     # Find mesh area area
     one = fem.Constant(msh, PETSc.ScalarType(1))
     f = fem.form(one*ufl.dx)
-    area = fem.assemble_scalar(f)
+    area = MPI.COMM_WORLD.allreduce(fem.assemble_scalar(f))
     #print(f'Area = {area}')
 
     # Outer no-slip
@@ -265,7 +265,7 @@ def solve_velocity_field(gmsh_model):
     
     # Compute average velocity
     f2 = fem.form(uh*ufl.dx)
-    average_velocity = fem.assemble_scalar(f2)/area
+    average_velocity = MPI.COMM_WORLD.allreduce(fem.assemble_scalar(f2))/area
     #print(f'Mean velocity = {average_velocity}')
 
     

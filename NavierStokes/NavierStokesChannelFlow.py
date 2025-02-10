@@ -316,6 +316,21 @@ with XDMFFile(MPI.COMM_WORLD, f"{FolderName}/Re{Re}ChannelVelocity.xdmf", "w") a
     pfile_xdmf.write_mesh(msh)
     pfile_xdmf.write_function(u2)
 
+'''
+if rank == 0:
+    print(f"Re={Re}\n", flush=True)
+    print(f"img_filename={img_fname}\n", flush=True)
+    print(f"Flowrate Ratio={flowrate_ratio}\n", flush=True)
+    print(f"Channel Mesh Size={channel_mesh_size}\n", flush=True)
+    print(f"Pressure DOFs: {Q.dofmap.index_map.size_local}\n", flush=True)
+    print(f"Velocity DOFs: {V.dofmap.index_map.size_local}\n", flush=True)
+    size = comm.Get_size()
+    print(f"{size} Cores Used\n", flush=True)
+    print(f"Run Time = {time.time() - tstart: 0.2f} sec\n", flush=True)
+'''
+# redirct stdout to a file text file in python
+
+
 with open(f"{FolderName}/RunParameters.txt", "w") as file:
     file.write(f"Re={Re}\n")
     file.write(f"img_filename={img_fname}\n")
@@ -326,6 +341,7 @@ with open(f"{FolderName}/RunParameters.txt", "w") as file:
     size = comm.Get_size()
     file.write(f"{size} Cores Used\n")
     file.write(f"Run Time = {time.time() - tstart: 0.2f} sec\n")
+
 
 MPI.COMM_WORLD.Barrier()
 MPI.COMM_WORLD.Abort(0)

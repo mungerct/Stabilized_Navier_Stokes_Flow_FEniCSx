@@ -77,27 +77,27 @@ u_inlet = Function(V1)
 u_inlet.interpolate(InletVelocity)
 bcu_inflow = dirichletbc(u_inlet, fem.locate_dofs_topological((W0, V1), fdim, ft.find(2)), W0)
 inlet_dofs = fem.locate_dofs_topological(V1, fdim, ft.find(2))
-print('bcu inflow')
-print(inlet_dofs)
+# print('bcu inflow')
+# print(inlet_dofs)
 # Walls
 u_nonslip = Function(V1) # by default zeros
 bcu_walls = dirichletbc(u_nonslip, fem.locate_dofs_topological((W0, V1), fdim, ft.find(4)), W0)
 wall_dofs = fem.locate_dofs_topological(V1, fdim, ft.find(4))
-print('bc walls')
-print(wall_dofs)
+# print('bc walls')
+# print(wall_dofs)
 # Obstacle
 bcu_obstacle = dirichletbc(u_nonslip, fem.locate_dofs_topological((W0, V1), fdim, ft.find(5)), W0)
 bcu = [bcu_inflow, bcu_obstacle, bcu_walls]
 obstacle_dofs = fem.locate_dofs_topological(V1, fdim, ft.find(5))
-print('bc obstacle')
-print(obstacle_dofs)
+# print('bc obstacle')
+# print(obstacle_dofs)
 # Outlet
 OuletValue = Function(Q1)
 bcp_outlet = dirichletbc(OuletValue, fem.locate_dofs_topological((W1, Q1), fdim, ft.find(3)), W1)
 bcp = [bcp_outlet]
 outlet_dofs = fem.locate_dofs_topological(Q1, fdim, ft.find(3))
-print('bc outlet')
-print(outlet_dofs)
+# print('bc outlet')
+# print(outlet_dofs)
 
 bc = [bcu_inflow, bcu_walls, bcu_obstacle]
 
@@ -142,7 +142,7 @@ if rank == 0:
 
 
 # ------ Create/Define weak form ------
-dx = ufl.dx(metadata={'quadrature_degree':1}) # Reduce to 1 gauss point to increase speed (no loss of accuracy for linear elements)
+dx = ufl.dx(metadata={'quadrature_degree':2}) # Reduce to 1 gauss point to increase speed (no loss of accuracy for linear elements)
 W0_NS = W.sub(0)
 V_NS, _ = W0_NS.collapse()
 w = Function(W)
@@ -205,15 +205,43 @@ log.set_log_level(log.LogLevel.WARNING)
 u = w.sub(0).collapse() # Velocity
 p = w.sub(1).collapse() # Pressure
 
+Lc = 0.08050331175
+Uc = 0.45
+
+rho = 1
+mu = nu
+n = ufl.FacetNormal(msh)
+stress = -p * ufl.Identity(3) + 2.0 * mu * ufl.sym(ufl.grad(u))
+traction = ufl.dot(stress, n)
+
+drag_expr = traction[0]
+lift_expr = traction[1]
+
+dObs = ufl.Measure("ds", domain=msh, subdomain_data=ft, subdomain_id=5)
+drag_form = form(drag_expr * dObs)
+lift_form = form(lift_expr * dObs)
+
+F_drag = fem.assemble_scalar(drag_form)
+F_lift = fem.assemble_scalar(lift_form)
+
+F_drag = comm.allreduce(F_drag, op=MPI.SUM)
+F_lift = comm.allreduce(F_lift, op=MPI.SUM)
+
+drag_coeff = 2* F_drag / (rho * Uc**2 * Lc)
+lift_coeff = 2* F_lift / (rho * Uc**2 * Lc)
+
+'''
 n = -FacetNormal(msh)  # Normal pointing out of obstacle
-dObs = Measure("ds", ft.find(5), domain=msh)
-u_t = inner(as_vector((n[1], -n[0])), u)
+dObs = Measure("ds", domain=msh, subdomain_data=ft.find(5))
+# dObs = Measure("ds", ft.find(5), domain=msh)
+u_t = inner(as_vector((n[2], -n[1], n[0])), u)
 drag = form(2 / 0.1 * (1 * inner(grad(u_t), n) * n[1] - p * n[0]) * dObs)
 lift = form(-2 / 0.1 * (1 * inner(grad(u_t), n) * n[0] + p * n[1]) * dObs)
+'''
 
 if rank == 0:
-    print(f"Coefficient of Lift: {lift}", flush=True)
-    print(f"Coefficient of Drag: {drag}", flush=True)
+    print(f"Coefficient of Lift: {lift_coeff}", flush=True)
+    print(f"Coefficient of Drag: {drag_coeff}", flush=True)
 
 from dolfinx.io import XDMFFile
 from basix.ufl import element as VectorElement

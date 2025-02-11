@@ -133,7 +133,6 @@ Re_UGN = u_norm*h/(2*nu)
 z = conditional((le(Re_UGN, 3)), Re_UGN/3, 1)
 tau_LSIC = h/2*u_norm*z
 
-
 a = inner(dot(u, nabla_grad(u)),v) * dx # Advection
 a += nu*inner(grad(u),grad(v)) * dx # Diffusion
 a -= inner(p,div(v)) * dx # Pressure

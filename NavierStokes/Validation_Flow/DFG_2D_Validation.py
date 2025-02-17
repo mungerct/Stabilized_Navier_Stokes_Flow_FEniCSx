@@ -2,7 +2,6 @@
 
 import sys
 import os
-from dolfinx import mesh
 from dolfinx import fem, la
 from dolfinx.io import gmshio
 from mpi4py import MPI
@@ -15,29 +14,18 @@ import time
 from dolfinx import log
 import numpy as np
 
-from mpi4py import MPI
-from petsc4py import PETSc
-
-from basix.ufl import element
-
-from dolfinx.cpp.mesh import to_type, cell_entity_type
-from dolfinx.fem import (Constant, Function, functionspace,
-                         assemble_scalar, dirichletbc, form, locate_dofs_topological, set_bc)
-from dolfinx.fem.petsc import (apply_lifting, assemble_matrix, assemble_vector,
-                               create_vector, create_matrix, set_bc)
-from dolfinx.graph import adjacencylist
-from dolfinx.geometry import bb_tree, compute_collisions_points, compute_colliding_cells
-from dolfinx.io import (VTXWriter, distribute_entity_data, gmshio)
-from dolfinx.mesh import create_mesh, meshtags_from_entities
-from ufl import (FacetNormal, Identity, Measure, TestFunction, TrialFunction,
-                 as_vector, div, dot, ds, dx, inner, lhs, grad, nabla_grad, rhs, sym, system)
+from dolfinx.fem import (Function, functionspace,
+                         assemble_scalar, dirichletbc, form)
+from dolfinx.io import gmshio
+from ufl import (FacetNormal, Measure,
+                 as_vector, div, dot, ds, dx, inner, lhs, grad, nabla_grad, sym)
 
 gmsh_model = sys.argv[1]
 
 comm = MPI.COMM_WORLD
 rank = comm.Get_rank()
 
-msh, _, ft = gmshio.read_from_msh(gmsh_model, MPI.COMM_WORLD, 0, gdim=3)
+msh, _, ft = gmshio.read_from_msh(gmsh_model, MPI.COMM_WORLD, 0, gdim=2)
 
 P2 = element("Lagrange", msh.basix_cell(), 1, shape=(msh.geometry.dim,)) # Velocity elements for P1-P1
 P1 = element("Lagrange", msh.basix_cell(), 1) # Pressure elements
@@ -59,11 +47,11 @@ V1, _ = W0.collapse() # Velocity subspace
 W1 = W.sub(1)
 Q1, _ = W1.collapse() # Pressure subspace
 
-gdim = 3
-fdim = 2
+gdim = 2
+fdim = 1
 def InletVelocity(x):
     values = np.zeros((gdim, x.shape[1]), dtype=PETSc.ScalarType)
-    values[0] = (4 * x[1] * (0.41 - x[1]) / (0.41**2))*((4 * x[2] * (0.41 - x[2]) / (0.41**2))) * 0.45
+    values[0] = (4 * x[1] * (0.41 - x[1]) / (0.41**2)) * 0.45
     return values
 
 # Maker Numbers
@@ -142,7 +130,7 @@ if rank == 0:
 
 
 # ------ Create/Define weak form ------
-dx = ufl.dx(metadata={'quadrature_degree':2}) # Reduce to 1 gauss point to increase speed (no loss of accuracy for linear elements)
+dx = ufl.dx(metadata={'quadrature_degree':2}) # Reduce to 2 gauss point to increase speed (no loss of accuracy for linear elements)
 W0_NS = W.sub(0)
 V_NS, _ = W0_NS.collapse()
 w = Function(W)
@@ -150,7 +138,7 @@ w = Function(W)
 (v, q) = ufl.TestFunctions(W)
 f = Function(V_NS)
 
-nu = 1
+nu = 1e-3
 r = 2
 h = ufl.CellDiameter(msh)
 # SUPG and PSPG
@@ -177,25 +165,6 @@ a += tau_LSIC*inner(div(v), div(u)) * dx # LSIC
 dw = ufl.TrialFunction(W)
 dF = ufl.derivative(a, w, dw)
 w.interpolate(U)
-
-u_IC = w.sub(0).collapse() # Velocity
-p_IC = w.sub(1).collapse() # Pressure
-
-from dolfinx.io import XDMFFile
-from basix.ufl import element as VectorElement
-
-with XDMFFile(MPI.COMM_WORLD, f"DFGValidationPressureIntialGuess.xdmf", "w") as pfile_xdmf:
-    p_IC.x.scatter_forward()
-    p_IC.name = 'Pressure'
-    pfile_xdmf.write_mesh(msh)
-    pfile_xdmf.write_function(p_IC)
-
-# Save the velocity field
-with XDMFFile(MPI.COMM_WORLD, f"DFGValidationVelocityIntialGuess.xdmf", "w") as pfile_xdmf:
-    u_IC.x.scatter_forward()
-    u_IC.name = 'Velocity'
-    pfile_xdmf.write_mesh(msh)
-    pfile_xdmf.write_function(u_IC)
 
 from dolfinx.fem.petsc import NonlinearProblem
 problem = NonlinearProblem(a, w, bcs=bc, J=dF)
@@ -224,48 +193,24 @@ log.set_log_level(log.LogLevel.WARNING)
 u = w.sub(0).collapse() # Velocity
 p = w.sub(1).collapse() # Pressure
 
-Lc = 0.1*0.41
-Uc = 2
 
-rho = 1
-mu = nu
-n = ufl.FacetNormal(msh)
-stress = -p * ufl.Identity(3) + 2.0 * mu * ufl.sym(ufl.grad(u))
-traction = ufl.dot(stress, n)
-
-drag_expr = traction[0]
-lift_expr = traction[1]
-
-dObs = ufl.Measure("ds", domain=msh, subdomain_data=ft, subdomain_id=5)
-drag_form = form(drag_expr * dObs)
-lift_form = form(lift_expr * dObs)
-
-F_drag = fem.assemble_scalar(drag_form)
-F_lift = fem.assemble_scalar(lift_form)
-
-F_drag = comm.allreduce(F_drag, op=MPI.SUM)
-F_lift = comm.allreduce(F_lift, op=MPI.SUM)
-
-drag_coeff = 2* F_drag / (rho * Uc**2 * Lc)
-lift_coeff = 2* F_lift / (rho * Uc**2 * Lc)
-
-'''
 n = -FacetNormal(msh)  # Normal pointing out of obstacle
-dObs = Measure("ds", domain=msh, subdomain_data=ft.find(5))
-# dObs = Measure("ds", ft.find(5), domain=msh)
-u_t = inner(as_vector((n[2], -n[1], n[0])), u)
-drag = form(2 / 0.1 * (1 * inner(grad(u_t), n) * n[1] - p * n[0]) * dObs)
-lift = form(-2 / 0.1 * (1 * inner(grad(u_t), n) * n[0] + p * n[1]) * dObs)
-'''
+dObs = Measure("ds", domain=msh, subdomain_data=ft, subdomain_id=5)
+u_t = inner(as_vector((n[1], -n[0])), u)
+drag_coeff = form(2 / 0.1 * (nu * inner(grad(u_t), n) * n[1] - p * n[0]) * dObs)
+lift_coeff = form(-2 / 0.1 * (nu * inner(grad(u_t), n) * n[0] + p * n[1]) * dObs)
+drag_coeff = msh.comm.gather(assemble_scalar(drag_coeff), root=0)
+lift_coeff = msh.comm.gather(assemble_scalar(lift_coeff), root=0)
 
 if rank == 0:
     print(f"Coefficient of Lift: {lift_coeff}", flush=True)
     print(f"Coefficient of Drag: {drag_coeff}", flush=True)
 
+
 from dolfinx.io import XDMFFile
 from basix.ufl import element as VectorElement
 
-with XDMFFile(MPI.COMM_WORLD, f"DFGValidationPressureNavierStokes.xdmf", "w") as pfile_xdmf:
+with XDMFFile(MPI.COMM_WORLD, f"DFG2DValidationPressure.xdmf", "w") as pfile_xdmf:
     p.x.scatter_forward()
     P3 = VectorElement("Lagrange", msh.basix_cell(), 1)
     u1 = Function(functionspace(msh, P3))
@@ -275,7 +220,7 @@ with XDMFFile(MPI.COMM_WORLD, f"DFGValidationPressureNavierStokes.xdmf", "w") as
     pfile_xdmf.write_function(u1)
 
 # Save the velocity field
-with XDMFFile(MPI.COMM_WORLD, f"DFGValidationVelocityNavierStokes.xdmf", "w") as pfile_xdmf:
+with XDMFFile(MPI.COMM_WORLD, f"DFG2DValidationVelocity.xdmf", "w") as pfile_xdmf:
     u.x.scatter_forward()
     P4 = VectorElement("Lagrange", msh.basix_cell(), 1, shape=(msh.geometry.dim,))
     u2 = Function(functionspace(msh, P4))

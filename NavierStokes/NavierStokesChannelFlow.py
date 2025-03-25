@@ -30,13 +30,54 @@ from image2gmsh3D import main as meshgen
 from image2inlet import solve_inlet_profiles
 import time
 from dolfinx import log
+from dolfinx.la import create_petsc_vector
+from dolfinx.fem.petsc import (apply_lifting, assemble_matrix, assemble_vector,
+                               create_vector, create_matrix, set_bc)
+
+class NonlinearPDE_SNESProblem:
+    def __init__(self, F, u, bc):
+        V = u.function_space
+        du = ufl.TrialFunction(V)
+        self.L = fem.form(F)
+        self.a = fem.form(ufl.derivative(F, u, du))
+        self.bc = bc
+        self._F, self._J = None, None
+        self.u = u
+
+    def F(self, snes, x, F):
+        """Assemble residual vector."""
+        from petsc4py import PETSc
+
+        from dolfinx.fem.petsc import apply_lifting, assemble_vector, set_bc
+
+        x.ghostUpdate(addv=PETSc.InsertMode.INSERT, mode=PETSc.ScatterMode.FORWARD)
+        x.copy(self.u.x.petsc_vec)
+        self.u.x.petsc_vec.ghostUpdate(addv=PETSc.InsertMode.INSERT,
+                                       mode=PETSc.ScatterMode.FORWARD)
+
+        with F.localForm() as f_local:
+            f_local.set(0.0)
+        assemble_vector(F, self.L)
+        apply_lifting(F, [self.a], [self.bc], [x], -1.0)
+        F.ghostUpdate(addv=PETSc.InsertMode.ADD, mode=PETSc.ScatterMode.REVERSE)
+        set_bc(F, self.bc, x, -1.0)
+
+    def J(self, snes, x, J, P):
+        """Assemble Jacobian matrix."""
+        from dolfinx.fem.petsc import assemble_matrix
+
+        J.zeroEntries()
+        assemble_matrix(J, self.a, bcs=self.bc)
+        J.assemble()
+
+snes_ksp_type = 'tfqmr'
 
 # ------ Inputs ------
 if len(sys.argv) == 4: # Reynolds number (use Re<10 for best results)
     Re = int(sys.argv[1])
     img_fname = sys.argv[2] # Input a .png file that is black and white (example on github) to be used as the inlet profile
     flowrate_ratio = float(sys.argv[3]) # Ratio of the two flow rates must be between 0 and 1, 0.5 is equal flow rate for both
-    channel_mesh_size = 0.25
+    channel_mesh_size = 0.1
 elif len(sys.argv) == 5:
     Re = int(sys.argv[1])
     img_fname = sys.argv[2]
@@ -256,6 +297,7 @@ w.interpolate(U) # Interpolate the Stokes flow solution to set as intial conditi
 if rank == 0:
     print("Interpolated Stokes Flow", flush=True)
 
+'''
 from dolfinx.fem.petsc import NonlinearProblem
 problem = NonlinearProblem(a, w, bcs=bcs, J=dF)
 from dolfinx.nls.petsc import NewtonSolver
@@ -266,7 +308,6 @@ solver.rtol = 1e-9
 solver.report = True
 
 log.set_log_level(log.LogLevel.INFO)
-
 ksp = solver.krylov_solver
 opts = PETSc.Options()
 option_prefix = ksp.getOptionsPrefix()
@@ -278,6 +319,43 @@ if rank == 0:
     print("Beginning to solve Navier-Stokes", flush=True)
 # Compute the solution
 solver.solve(w)
+'''
+
+problem = NonlinearPDE_SNESProblem(a, w, bcs)
+
+b = create_petsc_vector(W.dofmap.index_map, W.dofmap.index_map_bs)
+J = create_matrix(problem.a)
+
+snes = PETSc.SNES().create()
+opts = PETSc.Options()
+opts["snes_monitor"] = None
+snes.setFromOptions()
+snes.setFunction(problem.F, b)
+snes.setJacobian(problem.J, J)
+
+snes.setTolerances(rtol=1.0e-8, atol=1e-8, max_it=30)
+snes.getKSP().setType(snes_ksp_type)
+snes.getKSP().setTolerances(rtol=1.0e-8)
+
+if comm.rank == 0:
+    print('Running SNES solver')
+
+comm.barrier()
+
+t_start = time.time()
+
+snes.solve(None, w.x.petsc_vec)
+
+t_stop = time.time()
+
+if comm.rank == 0:
+    print(f'Num SNES iterations: {snes.getIterationNumber()}')
+    print(f'SNES termination reason: {snes.getConvergedReason()}')
+
+snes.destroy()
+b.destroy()
+J.destroy()
+
 log.set_log_level(log.LogLevel.WARNING)
 if rank == 0:
     print('Solved Navier-Stokes', flush=True)

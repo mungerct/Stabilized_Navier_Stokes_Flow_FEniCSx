@@ -51,7 +51,7 @@ gdim = 2
 fdim = 1
 def InletVelocity(x):
     values = np.zeros((gdim, x.shape[1]), dtype=PETSc.ScalarType)
-    values[0] = (4 * x[1] * (0.41 - x[1]) / (0.41**2)) * 0.45
+    values[0] = (4 * x[1] * 0.3 * (0.41 - x[1]) / (0.41**2))
     return values
 
 # Maker Numbers
@@ -180,8 +180,8 @@ log.set_log_level(log.LogLevel.INFO)
 ksp = solver.krylov_solver
 opts = PETSc.Options()
 option_prefix = ksp.getOptionsPrefix()
-opts[f"{option_prefix}ksp_type"] = "preonly"
-# opts[f"{option_prefix}ksp_type"] = "tfqmr"
+# opts[f"{option_prefix}ksp_type"] = "preonly"
+opts[f"{option_prefix}ksp_type"] = "tfqmr"
 opts[f"{option_prefix}pc_factor_mat_solver_type"] = "mumps"
 ksp.setFromOptions()
 
@@ -197,15 +197,21 @@ p = w.sub(1).collapse() # Pressure
 n = -FacetNormal(msh)  # Normal pointing out of obstacle
 dObs = Measure("ds", domain=msh, subdomain_data=ft, subdomain_id=5)
 u_t = inner(as_vector((n[1], -n[0])), u)
-drag_coeff = form(2 / 0.1 * (nu * inner(grad(u_t), n) * n[1] - p * n[0]) * dObs)
-lift_coeff = form(-2 / 0.1 * (nu * inner(grad(u_t), n) * n[0] + p * n[1]) * dObs)
+drag_coeff = form(2 / (0.1*(0.2**2)) * (nu * inner(grad(u_t), n) * n[1] - p * n[0]) * dObs)
+lift_coeff = form(-2 / (0.1 * (0.2**2)) * (nu * inner(grad(u_t), n) * n[0] + p * n[1]) * dObs)
+Cl_error = form(((-2 / (0.1 * (0.2**2)) * (nu * inner(grad(u_t), n) * n[0] + p * n[1]) - 0.010618948146)/0.010618948146) * dObs)
+Cd_error = form(((2 / (0.1*(0.2**2)) * (nu * inner(grad(u_t), n) * n[1] - p * n[0]) - 5.57953523384)/5.57953523384) * dObs)
+
 drag_coeff = msh.comm.gather(assemble_scalar(drag_coeff), root=0)
 lift_coeff = msh.comm.gather(assemble_scalar(lift_coeff), root=0)
+Cl_error = msh.comm.gather(assemble_scalar(Cl_error), root=0)
+Cd_error = msh.comm.gather(assemble_scalar(Cd_error), root=0)
 
 if rank == 0:
     print(f"Coefficient of Lift: {lift_coeff}", flush=True)
+    print(f"Cl Percent Error: {Cl_error}", flush=True)
     print(f"Coefficient of Drag: {drag_coeff}", flush=True)
-
+    print(f"Cd Percent Error: {Cd_error}", flush=True)
 
 from dolfinx.io import XDMFFile
 from basix.ufl import element as VectorElement

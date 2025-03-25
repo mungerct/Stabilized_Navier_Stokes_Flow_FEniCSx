@@ -34,7 +34,7 @@ from shapely.geometry import Point
 from shapely.geometry.polygon import Polygon
 
 
-def load_image(img_fname):
+def load_image(img_fname): # Want this entire function
     #print('Loading image {}'.format(img_fname))
     img = sk.io.imread(img_fname)
 
@@ -50,10 +50,10 @@ def load_image(img_fname):
 
     return gray_img
 
-def get_contours(gray_img):
+def get_contours(gray_img): # Want this entire function
     height, width = gray_img.shape    
     # Normalize and flip (for some reason)
-    raw_contours = sk.measure.find_contours(gray_img, 0.5)
+    raw_contours = sk.measure.find_contours(gray_img, 0.5) # Start with this, NOT the optimized contours
  
     #print('Found {} contours'.format(len(raw_contours)))
 
@@ -215,7 +215,7 @@ def process_2_channel_mesh_model(contours):
     contour_inner = contours[1]
     contour_outer = contours[0]
 
-    [contour_inner, mesh_lc_a] = optimize_contour(contour_inner)
+    [contour_inner, mesh_lc_a] = optimize_contour(contour_inner) # Want this output for streamtracing (contour_inner) should be a collection of x-y-z coords
     [contour_outer, mesh_lc_c] = optimize_contour(contour_outer)
 
     inner_shape = create_inner_shape(contour_inner)

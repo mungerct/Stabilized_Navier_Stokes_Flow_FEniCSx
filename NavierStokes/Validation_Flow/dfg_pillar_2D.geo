@@ -2,27 +2,26 @@ SetFactory("OpenCASCADE");
 
 // Geometry
 r = 0.5*0.1;
-cx = 0.5;
+cx = 0.2;
 cy = 0.2;
 L = 2.2;
 W = 0.41;
 //H = 0.125;
 
 // Element parameters
-//lc_coarse = 0.1*W;
-//lc_med = 0.015*W;
-//lc_fine = 0.05*r;
-//lc_super_fine = 0.03*r;
-//lc_ultra_fine = 0.1*lc_super_fine;
+/*
+lc_coarse = 0.1*W;
+lc_med = 0.015*W;
+lc_fine = 0.05*r;
+lc_super_fine = 0.03*r;
+lc_ultra_fine = 0.1*lc_super_fine;
+*/
 
-
-lc_coarse = 0.5*W/5;
-lc_med = 0.1*W/3;
-lc_fine = 0.2*r/2;
-lc_super_fine = 0.08*r/2;
-lc_ultra_fine = 1*lc_super_fine/4;
-
-n_layers = Ceil(W/lc_fine);
+lc_coarse = 0.5*W;
+lc_med = 0.05*W/12;
+lc_fine = 0.1*r;
+lc_super_fine = 0.06*r/2;
+lc_ultra_fine = 0.5*lc_super_fine/8;
 
 x_min = 0;
 x_max = x_min + L;
@@ -91,15 +90,11 @@ Field[5].FieldsList = {1, 2, 3, 4};
 Background Field = 5;
 
 Mesh.Algorithm = 8;
-//Recombine Surface{2};
+// Recombine Surface{2};
 
-Extrude{0, 0, W} {Surface{2}; Layers{n_layers}; }
+Physical Surface("fluid") = {2};
+Physical Curve("inlet") = {4};
+Physical Curve("outlet") = {2};
+Physical Curve("walls") = {1,3};
+Physical Curve("obstacle") = {5};
 
-Physical Volume("fluid") = {1};
-Physical Surface("inlet") = {4};
-Physical Surface("outlet") = {6};
-Physical Surface("walls") = {1,2,3,5,8};
-Physical Surface("obstacle") = {7};
-
-//+
-Show "*";

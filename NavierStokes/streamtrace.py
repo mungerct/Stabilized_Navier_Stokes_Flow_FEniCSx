@@ -25,13 +25,24 @@ import sys
 import h5py
 from scipy.interpolate import RegularGridInterpolator
 from scipy.integrate import solve_ivp
+from dolfinx.io import XDMFFile
+import basix
+import adios4dolfinx
+import numpy as np
+import matplotlib.pyplot as plt
+from scipy.integrate import RK45
+from dolfinx import geometry
+from scipy.integrate import solve_ivp
+from image2inlet import solve_inlet_profiles
 
 comm = MPI.COMM_WORLD
-img_fname = sys.argv[1] # File name of input image
-solname = sys.argv[2]
-solname_h5 = sys.argv[3] # File name of solution (.xdmf file)
+
+def pause():
+    # Define pause function for debugging
+    programPause = input("Press the <ENTER> key to continue...")
 
 def load_image(img_fname):
+    # Function to load in an image and convert to greyscale
     #print('Loading image {}'.format(img_fname))
     img = sk.io.imread(img_fname)
 
@@ -48,6 +59,7 @@ def load_image(img_fname):
     return gray_img
 
 def get_contours(gray_img):
+    # Function to look at the grewscale image and find the contours
     height, width = gray_img.shape    
     # Normalize and flip (for some reason)
     raw_contours = sk.measure.find_contours(gray_img, 0.5) # Start with this, NOT the optimized contours
@@ -78,12 +90,13 @@ def get_contours(gray_img):
         contour[:,0] /= width
         # contour[:,0] *= -1.0
 
-    #print("{:d} Contours detected".format(len(contours)))
+    # print("{:d} Contours detected".format(len(contours)))
 
     return contours
 
 
 def optimize_contour(contour):
+    # Optimize the number of points in the contor, helps space out the points evenly
     #print("Optimizing contour.")
     dir_flag = 0
     dir_bank = []
@@ -130,110 +143,177 @@ def optimize_contour(contour):
 
     return [contour, mesh_lc]
 
-def read_sol_file(comm, sol_fname_xdmf, sol_fname_h5):
-    with dolfinx.io.XDMFFile(comm, sol_fname_xdmf, "r") as infile:
-        # Read the mesh
-        mesh = infile.read_mesh(name="mesh")
-        mesh.topology.create_connectivity(mesh.topology.dim, mesh.topology.dim - 1)
+def read_mesh_and_function(fname_base, function_name, function_dim):
+    '''
+    INPUTS
+    fname_base:     file prefix, e.g., for data_u.xdmf, fname_base = data_u
+    function_name:  name of function saved to xdmf file, e.g., 'Velocity'
+    function_dime:  number of dimensions in function space, e.g., 2D velocity field: 2
+    
+    OUTPUTS
+    mesh:           mesh from saved data
+    uh:             function from saved data
+    data:           raw numpy array of saved data
+    '''
+    # Read in mesh file
+    with XDMFFile(comm, f"{fname_base}.xdmf", "r") as xdmf:
+        mesh = xdmf.read_mesh(name="mesh")
 
-        # Create a function space (this needs to match the space used in the saved file)
-        V = dolfinx.fem.functionspace(mesh, ("Lagrange", 1))
+    num_nodes_global = mesh.geometry.index_map().size_global
 
-        # Create a function in the space
-        u = dolfinx.fem.Function(V)
+    # Create the function space and function
+    P2 = basix.ufl.element("Lagrange", mesh.basix_cell(), 1, shape=(mesh.geometry.dim,))
+    V = dolfinx.fem.functionspace(mesh, P2)
 
-        # --- Load function values from HDF5 file ---
-    with h5py.File(sol_fname_h5, "r") as h5f:
-        # print("Available datasets in HDF5 file:", list(h5f.keys())) # Use to see datasets in the h5 file
-        # print("Datasets inside 'Function':", list(group.keys()))  # Check available datasets
-        data = h5f['Function']['Velocity']
-        u.x.array[:] = data
+    xyz = V.tabulate_dof_coordinates()
 
-        return[u, V, mesh]
+    uh = dolfinx.fem.Function(V)
 
-def velocity_interpolator_3D(x_grid, y_grid, z_grid, u, v, w):
-    # Create interpolators for the 3D velocity field
-    u_interp = RegularGridInterpolator((x_grid, y_grid, z_grid), u, bounds_error=False, fill_value=None)
-    v_interp = RegularGridInterpolator((x_grid, y_grid, z_grid), v, bounds_error=False, fill_value=None)
-    w_interp = RegularGridInterpolator((x_grid, y_grid, z_grid), w, bounds_error=False, fill_value=None)
+    h5_filename = f"{fname_base}.h5"
+    with h5py.File(h5_filename, "r") as h5f:
+        #print("Datasets in HDF5 file:", list(h5f.keys()))
+        print("Data keys in the 'Function' group:", list(h5f["Function"].keys()))
+        func_group = h5f["Function"]
+        #print("Keys in 'Function':", list(func_group.keys()))
 
-    def velocity_field(t, pos):
-        x, y, z = pos
-        u_val = u_interp((x, y, z))
-        v_val = v_interp((x, y, z))
-        w_val = w_interp((x, y, z))
-        return [u_val, v_val, w_val]
+        velocity_group = func_group[function_name]
+        print(f"Keys in '{function_name}':", list(velocity_group.keys()))
+        
+        data = h5f["Function"][function_name]["0"][...]
 
-    return velocity_field
+    local_input_range = adios4dolfinx.comm_helpers.compute_local_range(mesh.comm, num_nodes_global)
+    local_input_data = data[local_input_range[0]:local_input_range[1]]
 
-def stream_trace_3D(coord_grid, vel_grid, seed_points, t_span=(0, 10), max_step=0.1):
-    # Compute 3D streamlines starting from given seed points
-    xcoords = coord_grid[:, 0]
-    ycoords = coord_grid[:, 1]
-    zcoords = coord_grid[:, 2]
-    vel_grid = vel_grid.x.array.reshape(-1, 3)
-    ux = vel_grid[:, 0]  # x-component
-    uy = vel_grid[:, 1]  # y-component
-    uz = vel_grid[:, 2]  # z-component
+    shape = data.shape
 
-    xcoords, ycoords, zcoords, ux, uy, uz = sort_and_reshape(xcoords, ycoords, zcoords, ux, uy, uz)
+    x_dofmap = mesh.geometry.dofmap
+    igi = np.array(mesh.geometry.input_global_indices, dtype=np.int64)
+    global_geom_input = igi[x_dofmap]
+    global_geom_owner = adios4dolfinx.utils.index_owner(mesh.comm, global_geom_input.reshape(-1), num_nodes_global)
+    for i in range(function_dim):
+        arr_i = adios4dolfinx.comm_helpers.send_dofs_and_recv_values(global_geom_input.reshape(-1), global_geom_owner, mesh.comm, local_input_data[:,i], local_input_range[0])
+        dof_pos = x_dofmap.reshape(-1)*function_dim+i
+        uh.x.array[dof_pos] = arr_i
 
-    velocity_func = velocity_interpolator_3D(xcoords, ycoords, zcoords, ux, uy, uz)
-    streamlines = []
+    # Find number of components
+    element = V.ufl_element()
+    try:
+        n_comp = element.value_shape()[0]
+    except AttributeError:
+        # If it's a blocked element, assume each sub-element is scalar.
+        n_comp = len(element.sub_elements)
 
-    for seed in seed_points:
-        sol = solve_ivp(velocity_func, t_span, seed, method='RK45', max_step=max_step, dense_output=True)
-        streamlines.append(sol.sol)
+    # Get dof coordinates from the function space.
+    dof_coords = V.tabulate_dof_coordinates()[:,:function_dim]
 
-    return streamlines
+    # Reshape function values based on the number of components.
+    values = uh.x.array.reshape(-1, n_comp)
 
-def update_contour(contour):
+    # Extract unique vertex coordinates.
+    xyz_data, unique_indices = np.unique(dof_coords, axis=0, return_index=True)
+    uvw_data = values[unique_indices]
+
+    return mesh, uh, uvw_data, xyz_data
+
+def update_contour(img_fname):
+    # This function takes in the image filename and prepares it to be streamtraced
     gray_img = load_image(img_fname)
     img_contours = get_contours(gray_img)
     contour, mesh_lc = optimize_contour(img_contours[1])
-    contour = contour*0.99
+    contour = contour*0.55
     zeros_col = np.zeros((contour.shape[0], 1))
-    new_arr = np.hstack((contour, zeros_col))
+    new_arr = np.hstack((zeros_col, contour))
     return new_arr
 
-def sort_and_reshape(x, y, z, u, v, w):
-    """ Sort the grid points and reshape velocity fields to match sorted grids """
-    # Sort grid points
-    x_sorted = np.sort(x)
-    y_sorted = np.sort(y)
-    z_sorted = np.sort(z)
+def velfunc(t, x):
+    # This is the velocity function, it finds the velocity at a given point in the domain
+    cell_candidate = geometry.compute_collisions_points(bb_tree, x) # Choose one of the cells that contains the point
+    colliding_cell = geometry.compute_colliding_cells(mesh, cell_candidate, x) # Choose one of the cells that contains the point
+    if len(colliding_cell.links(0)) == 0:
+        # If the point is outside of the domain, set its velocity to be zero
+        # print("Point Outside Domain")
+        vel = np.array([0, 0, 0])
+        return vel
+    else:
+        cell_index = colliding_cell.links(0)[0]
+        vel = uh.eval(x, [cell_index])
+        # print(f'P:{x}, V:{vel}')
+        return vel
 
-    # Ensure that the velocity fields match the sorted grid order
-    # Using np.argsort to get the indices to reorder the velocity field
-    x_sorted_indices = np.argsort(x)
-    y_sorted_indices = np.argsort(y)
-    z_sorted_indices = np.argsort(z)
+def velocity_magnitude_event(t, y):
+    # Event flag for the "solve_ivp" function from Scipy, triggers if the particle stops moving
+    speed = np.linalg.norm(velfunc(t, y))
+    return speed - 1e-6  # triggers when speed is 1e-6
 
-    # Reorder velocity field arrays
-    u_sorted = u[x_sorted_indices]
-    u_sorted = u_sorted[:, y_sorted_indices]
-    u_sorted = u_sorted[:, :, z_sorted_indices]
+def position_event(t, y):
+    # Event flag for the "solve_ivp" function from Scipy, triggers when the particle is at x = 3.7 (the total domain is length = 4)
+    pos_x = y[0]
+    return pos_x - 3.7 # triggers when x is at 3
 
-    v_sorted = v[x_sorted_indices, :, :]
-    v_sorted = v_sorted[:, y_sorted_indices, :]
-    v_sorted = v_sorted[:, :, z_sorted_indices]
+def inner_contour_mesh_func(img_fname):
+    # Make a mesh of the inner countor and used those points to streamtrace
+    inner_mesh = solve_inlet_profiles(img_fname, 0.5)[1]
+    inner_mesh = inner_mesh.geometry.x
+    return inner_mesh
 
-    w_sorted = w[x_sorted_indices, :, :]
-    w_sorted = w_sorted[:, y_sorted_indices, :]
-    w_sorted = w_sorted[:, :, z_sorted_indices]
+def run_streamtrace(inner_mesh):
+    # Function to run the streamtrace at every point in the inner mesh
+    t_span = (0, 20)
+    endpoints = []
+    pointsx = []
+    pointsy = []
+    pointsz = []
 
-    return x_sorted, y_sorted, z_sorted, u_sorted, v_sorted, w_sorted
+    for i in range(inner_mesh.shape[0]):
+        velocity_magnitude_event.terminal = True  # stops integration when event is triggered
+        velocity_magnitude_event.direction = -1   # only when crossing threshold from above
+        position_event.terminal = True
+        position_event.direction = 1
+        events_list = (velocity_magnitude_event, position_event)
 
-print('Reading solution')
-u, V, msh = read_sol_file(comm, solname, solname_h5)
-gray_img = load_image(img_fname)
-img_contours = get_contours(gray_img)
-contour, mesh_lc = optimize_contour(img_contours[1])
-contour = contour*0.99
-contour = update_contour(contour)
-msh_coords = msh.geometry.x
-# np.set_printoptions(threshold=sys.maxsize)
-print(msh_coords.shape)
-print(u.x.array)
-# u = u.x.array.reshape(-1, 3)
-# streamlines = stream_trace_3D(msh_coords, u, contour, t_span=(0, 10), max_step=0.01)
+        row = inner_mesh[i,:]
+        sol = solve_ivp(velfunc, t_span, row, method='RK45', events = events_list, max_step = 0.25)
+        t_vals = []
+        x_vals = []
+        y_vals = []
+        z_vals = []
+        endpoint = []
+        t_vals.append(sol.t)
+        x_vals.append(sol.y[0])
+        y_vals.append(sol.y[1])
+        z_vals.append(sol.y[2])
+        x_vals = np.array(x_vals)
+        y_vals = np.array(y_vals)
+        z_vals = np.array(z_vals)
+
+        endpoints.append([x_vals[0, -1].item(), y_vals[0, -1].item(), z_vals[0, -1].item()])
+        pointsx.append([x_vals[0, -1].item()])
+        pointsy.append([y_vals[0, -1].item()])
+        pointsz.append([z_vals[0, -1].item()])
+
+    pointsy = np.array(pointsy)
+    pointsz = np.array(pointsz)
+    return pointsx, pointsy, pointsz
+
+def plot_streamtrace(pointsy, pointsz, contour):
+    pointsy = np.squeeze(pointsy)
+    pointsz = np.squeeze(pointsz)
+    order = np.argsort(np.arctan2(pointsz - pointsz.mean(), pointsy - pointsy.mean()))
+    # plt.fill(pointsy[order], pointsz[order], "g", alpha=0.5)
+    plt.plot(pointsy, pointsz, marker = 'o') # Make stream trace outlet profile
+    plt.plot(contour[:,1],contour[:,2], marker = '*')
+    plt.show()
+    return(plt)
+
+img_fname = sys.argv[1] # File name of input image
+solname = sys.argv[2] # base name of .xdmf file (test.xdmf is just test)
+funcname = sys.argv[3] # Name of function ("Velocity" or "Pressure", etc.)
+funcdim = 3 # Dimension of solution (2 or 3)
+
+contour = update_contour(img_fname)
+mesh, uh, uvw_data, xyz_data = read_mesh_and_function(solname, funcname, funcdim)
+bb_tree = geometry.bb_tree(mesh, mesh.topology.dim)
+inner_mesh = inner_contour_mesh_func(img_fname)
+
+pointsx, pointsy, pointsz = run_streamtrace(inner_mesh)
+plot_streamtrace(pointsy, pointsz, contour)

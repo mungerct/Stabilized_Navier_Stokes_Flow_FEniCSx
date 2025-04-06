@@ -35,6 +35,7 @@ from dolfinx.fem.petsc import (apply_lifting, assemble_matrix, assemble_vector,
                                create_vector, create_matrix, set_bc)
 
 class NonlinearPDE_SNESProblem:
+    # Directly create the Petsc nonlinear solver
     def __init__(self, F, u, bc):
         V = u.function_space
         du = ufl.TrialFunction(V)
@@ -296,30 +297,6 @@ dF = ufl.derivative(a, w, dw)
 w.interpolate(U) # Interpolate the Stokes flow solution to set as intial condition for Navier-Stokes flow
 if rank == 0:
     print("Interpolated Stokes Flow", flush=True)
-
-'''
-from dolfinx.fem.petsc import NonlinearProblem
-problem = NonlinearProblem(a, w, bcs=bcs, J=dF)
-from dolfinx.nls.petsc import NewtonSolver
-
-solver = NewtonSolver(MPI.COMM_WORLD, problem)
-solver.convergence_criterion = "incremental"
-solver.rtol = 1e-9
-solver.report = True
-
-log.set_log_level(log.LogLevel.INFO)
-ksp = solver.krylov_solver
-opts = PETSc.Options()
-option_prefix = ksp.getOptionsPrefix()
-opts[f"{option_prefix}ksp_type"] = "tfqmr"
-opts[f"{option_prefix}pc_factor_mat_solver_type"] = "mumps"
-ksp.setFromOptions()
-
-if rank == 0:
-    print("Beginning to solve Navier-Stokes", flush=True)
-# Compute the solution
-solver.solve(w)
-'''
 
 problem = NonlinearPDE_SNESProblem(a, w, bcs)
 

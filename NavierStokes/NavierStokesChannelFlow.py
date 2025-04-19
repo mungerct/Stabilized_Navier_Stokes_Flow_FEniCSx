@@ -226,7 +226,14 @@ and "On the parameter of choice in grad-div stabilization for the stokes equatio
 
 # ------ Assemble LHS matrix and RHS vector and solve-------
 from dolfinx.fem.petsc import LinearProblem
-problem = LinearProblem(a, L, bcs = bcs, petsc_options={'ksp_type': 'bcgs', 'ksp_rtol':1e-10, 'ksp_atol':1e-10})
+# problem = LinearProblem(a, L, bcs = bcs, petsc_options={'ksp_type': 'bcgs', 'ksp_rtol':1e-10, 'ksp_atol':1e-10})
+
+problem = LinearProblem(a, L, bcs = bcs, petsc_options={
+    'ksp_type': 'fgmres',
+    'pc_type': 'asm',
+    'ksp_monitor':''
+    }
+)
 log.set_log_level(log.LogLevel.INFO)
 U = Function(W)
 U = problem.solve() # Solve the problem

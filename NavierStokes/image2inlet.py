@@ -34,6 +34,11 @@ from shapely.geometry import Point
 from shapely.geometry.polygon import Polygon
 
 
+comm = MPI.COMM_WORLD
+rank = comm.Get_rank()
+
+
+
 def load_image(img_fname): # Want this entire function
     #print('Loading image {}'.format(img_fname))
     img = sk.io.imread(img_fname)
@@ -177,7 +182,9 @@ def outer_contour_to_gmsh(contour, mesh_lc, p_idx=1, l_idx=1, loop_idx=1):
     gmsh.model.mesh.generate(2)
     gmsh.write("outer_contour_mesh.msh")
     gmsh.write('outer_contour.geo_unrolled')
-    print('Saved the Outer Contour Mesh')
+
+    if rank == 0:
+        print('Saved the Outer Contour Mesh', flush = True)
  
     return gmsh.model
 
@@ -207,7 +214,8 @@ def inner_contour_to_gmsh(contour, mesh_lc):
     gmsh.model.mesh.generate(2)
     gmsh.write("inner_contour_mesh.msh")
     gmsh.write('inner_contour.geo_unrolled')
-    print("Saved the Inner Contour Mesh")
+    if rank == 0:
+        print("Saved the Inner Contour Mesh", flush = True)
     
     return gmsh.model
 

@@ -280,6 +280,7 @@ def inner_contour_mesh_func(img_fname):
     return inner_mesh
 
 def run_streamtrace(inner_mesh):
+    print('streamtracing',flush=True)
     # Function to run the streamtrace at every point in the inner mesh
     t_span = (0, 20)
     endpoints = []
@@ -308,11 +309,11 @@ def run_streamtrace(inner_mesh):
         x_vals = np.array(x_vals)
         y_vals = np.array(y_vals)
         z_vals = np.array(z_vals)
-
-        endpoints.append([x_vals[0, -1].item(), y_vals[0, -1].item(), z_vals[0, -1].item()])
-        pointsx.append([x_vals[0, -1].item()])
-        pointsy.append([y_vals[0, -1].item()])
-        pointsz.append([z_vals[0, -1].item()])
+        if x_vals[0,-1] > 2:
+            endpoints.append([x_vals[0, -1].item(), y_vals[0, -1].item(), z_vals[0, -1].item()])
+            pointsx.append([x_vals[0, -1].item()])
+            pointsy.append([y_vals[0, -1].item()])
+            pointsz.append([z_vals[0, -1].item()])
 
     pointsy = np.array(pointsy)
     pointsz = np.array(pointsz)
@@ -333,11 +334,9 @@ def plot_streamtrace(pointsy, pointsz, contour):
 
     # plt.scatter(x, y, marker = '.', color = 'b')
     plt.fill(x, y)
+    plt.show()
 
-    order = np.argsort(np.arctan2(pointsz - pointsz.mean(), pointsy - pointsy.mean()))
-    # plt.fill(pointsy[order], pointsz[order], "g", alpha=0.5)
-    plt.scatter(pointsy, pointsz, marker = 'o', facecolors = 'none', edgecolors = 'r') # Make stream trace outlet profile
-    plt.plot(contour[:,1],contour[:,2], marker = '*')
+    plt.scatter(pointsy, pointsz, marker = 'o') # Make stream trace outlet profile
     plt.gca().set_aspect('equal')
     plt.show()
 
@@ -393,6 +392,7 @@ def make_rev_streamtrace_seeds(minx, maxx, miny, maxy):
     return new_arr # Array of new seeds for reverse stream trace
 
 def run_reverse_streamtrace(inner_mesh):
+    print('Streamtracing',flush=True)
     # Function to run the streamtrace at every point in the inner mesh
     t_span = (0, 20)
     endpoints = []
@@ -422,10 +422,11 @@ def run_reverse_streamtrace(inner_mesh):
         y_vals = np.array(y_vals)
         z_vals = np.array(z_vals)
 
-        endpoints.append([x_vals[0, -1].item(), y_vals[0, -1].item(), z_vals[0, -1].item()])
-        pointsx.append([x_vals[0, -1].item()])
-        pointsy.append([y_vals[0, -1].item()])
-        pointsz.append([z_vals[0, -1].item()])
+        if x_vals[0,-1] < 2:
+            endpoints.append([x_vals[0, -1].item(), y_vals[0, -1].item(), z_vals[0, -1].item()])
+            pointsx.append([x_vals[0, -1].item()])
+            pointsy.append([y_vals[0, -1].item()])
+            pointsz.append([z_vals[0, -1].item()])
 
     pointsy = np.array(pointsy)
     pointsz = np.array(pointsz)
@@ -447,18 +448,25 @@ def find_seed_end(rev_pointsy, rev_pointsz, seeds, contour):
 
     return valid_seeds
 
+def plot_inlet(contour, inner_mesh):
+    plt.fill(contour[:,1],contour[:,2])
+    plt.gca().set_aspect('equal')
+    plt.show()
+
+
 img_fname = sys.argv[1] # File name of input image
 solname = sys.argv[2] # base name of .xdmf file (test.xdmf is just test)
 funcname = sys.argv[3] # Name of function ("Velocity" or "Pressure", etc.)
 funcdim = 3 # Dimension of solution (2 or 3)
 
 contour = update_contour(img_fname)
-print(contour)
 mesh, uh, uvw_data, xyz_data = read_mesh_and_function(solname, funcname, funcdim)
 bb_tree = geometry.bb_tree(mesh, mesh.topology.dim)
 inner_mesh = inner_contour_mesh_func(img_fname)
+plot_inlet(contour, inner_mesh)
 
 pointsx, pointsy, pointsz = run_streamtrace(inner_mesh)
+plot_streamtrace(pointsy, pointsz, contour)
 minx, maxx, miny, maxy = expand_streamtace(pointsy, pointsz, contour)
 seeds = make_rev_streamtrace_seeds(minx, maxx, miny, maxy)
 rev_pointsx, rev_pointsy, rev_pointsz = run_reverse_streamtrace(seeds)

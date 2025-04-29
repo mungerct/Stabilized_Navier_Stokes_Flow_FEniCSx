@@ -334,10 +334,15 @@ def plot_streamtrace(pointsy, pointsz, contour):
 
     # plt.scatter(x, y, marker = '.', color = 'b')
     plt.fill(x, y)
+    plt.gca().set_aspect('equal')
+    plt.xlim(-0.3, 0.3)
+    plt.ylim(-0.3, 0.3)
     plt.show()
 
     plt.scatter(pointsy, pointsz, marker = 'o') # Make stream trace outlet profile
     plt.gca().set_aspect('equal')
+    plt.xlim(-0.3, 0.3)
+    plt.ylim(-0.3, 0.3)
     plt.show()
 
     return(plt)
@@ -451,6 +456,8 @@ def find_seed_end(rev_pointsy, rev_pointsz, seeds, contour):
 def plot_inlet(contour, inner_mesh):
     plt.fill(contour[:,1],contour[:,2])
     plt.gca().set_aspect('equal')
+    plt.xlim(-0.3, 0.3)
+    plt.ylim(-0.3, 0.3)
     plt.show()
 
 

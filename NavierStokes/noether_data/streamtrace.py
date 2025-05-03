@@ -48,6 +48,8 @@ def load_image(img_fname):
     # Function to load in an image and convert to greyscale
     #print('Loading image {}'.format(img_fname))
     img = sk.io.imread(img_fname)
+    plt.imshow(img)
+    plt.show()
 
     # print(img.shape)
     if (len(img.shape) == 2):
@@ -222,7 +224,6 @@ def update_contour(img_fname):
     gray_img = load_image(img_fname)
     img_contours = get_contours(gray_img)
     contour, mesh_lc = optimize_contour(img_contours[1])
-    contour = contour*0.55
     zeros_col = np.zeros((contour.shape[0], 1))
     new_arr = np.hstack((zeros_col, contour))
     return new_arr
@@ -477,12 +478,14 @@ contour = update_contour(img_fname)
 mesh, uh, uvw_data, xyz_data = read_mesh_and_function(solname, funcname, funcdim)
 bb_tree = geometry.bb_tree(mesh, mesh.topology.dim)
 inner_mesh = inner_contour_mesh_func(img_fname)
-plot_inlet(contour, inner_mesh)
+# plot_inlet(contour, inner_mesh)
 
 pointsx, pointsy, pointsz = run_streamtrace(inner_mesh)
 plot_streamtrace(pointsy, pointsz, contour)
 minx, maxx, miny, maxy = expand_streamtace(pointsy, pointsz, contour)
 seeds = make_rev_streamtrace_seeds(minx, maxx, miny, maxy)
+np.savetxt("rev_seeds.csv", seeds, delimiter=",")
+
 
 rev_pointsx, rev_pointsy, rev_pointsz = run_reverse_streamtrace(seeds)
 final_output = find_seed_end(rev_pointsy, rev_pointsz, seeds, contour)

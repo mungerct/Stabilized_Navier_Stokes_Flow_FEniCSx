@@ -38,6 +38,7 @@ from image2inlet import solve_inlet_profiles
 import alphashape
 from descartes import PolygonPatch
 from multiprocessing import Process, Queue
+from multiprocessing import Pool, cpu_count
 
 comm = MPI.COMM_WORLD
 
@@ -47,12 +48,12 @@ def pause():
 
 def load_image(img_fname):
     # Function to load in an image and convert to greyscale
-    #print('Loading image {}'.format(img_fname))
+    #print('Loading image {}'.format(img_fname), flush = True)
     img = sk.io.imread(img_fname)
-    plt.imshow(img)
-    plt.show()
+    # plt.imshow(img)
+    # plt.show()
 
-    # print(img.shape)
+    # print(img.shape, flush = True)
     if (len(img.shape) == 2):
         gray_img = img
     else:
@@ -70,7 +71,7 @@ def get_contours(gray_img):
     # Normalize and flip (for some reason)
     raw_contours = sk.measure.find_contours(gray_img, 0.5) # Start with this, NOT the optimized contours
  
-    #print('Found {} contours'.format(len(raw_contours)))
+    #print('Found {} contours'.format(len(raw_contours)), flush = True)
 
     contours = []
     for n, contour in enumerate(raw_contours):
@@ -82,11 +83,11 @@ def get_contours(gray_img):
         r_mask = ndimage.binary_fill_holes(r_mask)
 
         contour_area = float(np.count_nonzero(r_mask))/(float(height * width))
-        #print(np.count_nonzero(r_mask))
+        #print(np.count_nonzero(r_mask), flush = True)
         if (contour_area >= 0.05):
             contours.append(contour)
 
-    #print('Reduced to {} contours'.format(len(contours)))
+    #print('Reduced to {} contours'.format(len(contours)), flush = True)
 
     for n, contour in enumerate(contours):
         contour[:,1] -= 0.5 * height
@@ -96,13 +97,13 @@ def get_contours(gray_img):
         contour[:,0] /= width
         contour[:,0] *= -1.0
 
-    # print("{:d} Contours detected".format(len(contours)))
+    # print("{:d} Contours detected".format(len(contours)), flush = True)
 
     return contours
 
 def optimize_contour(contour):
     # Optimize the number of points in the contor, helps space out the points evenly
-    #print("Optimizing contour.")
+    #print("Optimizing contour.", flush = True)
     dir_flag = 0
     dir_bank = []
 
@@ -113,7 +114,7 @@ def optimize_contour(contour):
     y = contour[:,0]
 
     signal = x + 1j*y
-    #print(signal)
+    #print(signal, flush = True)
 
     fft = np.fft.fft(signal)
     freq = np.fft.fftfreq(signal.shape[-1])
@@ -149,6 +150,7 @@ def optimize_contour(contour):
     return [contour, mesh_lc]
 
 def read_mesh_and_function(fname_base, function_name, function_dim):
+    print('Reading solution from file', flush = True)
     '''
     INPUTS
     fname_base:     file prefix, e.g., for data_u.xdmf, fname_base = data_u
@@ -176,13 +178,13 @@ def read_mesh_and_function(fname_base, function_name, function_dim):
 
     h5_filename = f"{fname_base}.h5"
     with h5py.File(h5_filename, "r") as h5f:
-        #print("Datasets in HDF5 file:", list(h5f.keys()))
+        #print("Datasets in HDF5 file:", list(h5f.keys()), flush = True)
         # print("Data keys in the 'Function' group:", list(h5f["Function"].keys()))
         func_group = h5f["Function"]
-        #print("Keys in 'Function':", list(func_group.keys()))
+        #print("Keys in 'Function':", list(func_group.keys()), flush = True)
 
         velocity_group = func_group[function_name]
-        # print(f"Keys in '{function_name}':", list(velocity_group.keys()))
+        # print(f"Keys in '{function_name}':", list(velocity_group.keys()), flush = True)
         
         data = h5f["Function"][function_name]["0"][...]
 
@@ -222,6 +224,7 @@ def read_mesh_and_function(fname_base, function_name, function_dim):
 
 def update_contour(img_fname):
     # This function takes in the image filename and prepares it to be streamtraced
+    print('Finding Image Contour', flush = True)
     gray_img = load_image(img_fname)
     img_contours = get_contours(gray_img)
     contour, mesh_lc = optimize_contour(img_contours[1])
@@ -235,13 +238,13 @@ def velfunc(t, x):
     colliding_cell = geometry.compute_colliding_cells(mesh, cell_candidate, x) # Choose one of the cells that contains the point
     if len(colliding_cell.links(0)) == 0:
         # If the point is outside of the domain, set its velocity to be zero
-        # print("Point Outside Domain")
+        # print("Point Outside Domain", flush = True)
         vel = np.array([0, 0, 0])
         return vel
     else:
         cell_index = colliding_cell.links(0)[0]
         vel = uh.eval(x, [cell_index])
-        # print(f'P:{x}, V:{vel}')
+        # print(f'P:{x}, V:{vel}', flush = True)
         return vel
     
 def velfunc_reverese(t, x):
@@ -250,14 +253,14 @@ def velfunc_reverese(t, x):
     colliding_cell = geometry.compute_colliding_cells(mesh, cell_candidate, x) # Choose one of the cells that contains the point
     if len(colliding_cell.links(0)) == 0:
         # If the point is outside of the domain, set its velocity to be zero
-        # print("Point Outside Domain")
+        # print("Point Outside Domain", flush = True)
         vel = np.array([0, 0, 0])
         return vel
     else:
         cell_index = colliding_cell.links(0)[0]
         vel = uh.eval(x, [cell_index])
         vel = vel*(-1)
-        # print(f'P:{x}, V:{vel}')
+        # print(f'P:{x}, V:{vel}', flush = True)
         return vel
 
 def velocity_magnitude_event(t, y):
@@ -282,7 +285,7 @@ def inner_contour_mesh_func(img_fname):
     return inner_mesh
 
 def run_streamtrace(inner_mesh):
-    print('streamtracing',flush=True)
+    print('Foward streamtracing', flush = True)
     # Function to run the streamtrace at every point in the inner mesh
     t_span = (0, 20)
     endpoints = []
@@ -296,7 +299,7 @@ def run_streamtrace(inner_mesh):
         position_event.terminal = True
         position_event.direction = 1
         events_list = (velocity_magnitude_event, position_event)
-        # print(inner_mesh)
+        # print(inner_mesh, flush = True)
         row = inner_mesh[i,:]
         sol = solve_ivp(velfunc, t_span, row, method='RK45', events = events_list, max_step = 0.25)
         t_vals = []
@@ -350,6 +353,7 @@ def plot_streamtrace(pointsy, pointsz, contour):
     return(plt)
 
 def expand_streamtace(pointsy, pointsz, contour):
+    print('Expanding edges of foward streamtace')
     pointsy = np.squeeze(pointsy)
     pointsz = np.squeeze(pointsz)
 
@@ -398,79 +402,53 @@ def make_rev_streamtrace_seeds(minx, maxx, miny, maxy, numpoints):
 
     return new_arr # Array of new seeds for reverse stream trace
 
+def process_row(row):
+    t_span = (0, 20)
+    velocity_magnitude_event.terminal = True
+    velocity_magnitude_event.direction = -1
+    reverse_position_event.terminal = True
+    reverse_position_event.direction = -1
+    events_list = (reverse_position_event,)
+
+    sol = solve_ivp(velfunc_reverese, t_span, row, method='RK45', events=events_list, max_step=0.125)
+
+    x_vals = np.array(sol.y[0])
+    y_vals = np.array(sol.y[1])
+    z_vals = np.array(sol.y[2])
+
+    if x_vals[-1] < 2:
+        return (
+            [x_vals[-1]],
+            [y_vals[-1]],
+            [z_vals[-1]]
+        )
+    else:
+        return None
+
 def run_reverse_streamtrace(inner_mesh):
     start_time = time.time()
-    print('Reverse Streamtracing', flush = True)
-    # Function to run the streamtrace at every point in the inner mesh
-    t_span = (0, 20)
-    endpoints = []
-    pointsx = []
-    pointsy = []
-    pointsz = []
+    print('Reverse Streamtracing', flush=True)
 
-    # q = Queue()
+    with Pool(processes = cpu_count()) as pool:
+        results = pool.map(process_row, [inner_mesh[i, :] for i in range(inner_mesh.shape[0])])
 
-    # def running_sum(i):
+    # Filter out None results
+    results = [res for res in results if res is not None]
 
-    for i in range(inner_mesh.shape[0]):
-        velocity_magnitude_event.terminal = True  # stops integration when event is triggered
-        velocity_magnitude_event.direction = -1   # only when crossing threshold from above
-        reverse_position_event.terminal = True
-        reverse_position_event.direction = -1
-        events_list = (reverse_position_event)
-        # print(inner_mesh)
-        row = inner_mesh[i,:]
-        sol = solve_ivp(velfunc_reverese, t_span, row, method='RK45', events = events_list, max_step = 0.125)
-        t_vals = []
-        x_vals = []
-        y_vals = []
-        z_vals = []
-        endpoint = []
-        t_vals.append(sol.t)
-        x_vals.append(sol.y[0])
-        y_vals.append(sol.y[1])
-        z_vals.append(sol.y[2])
-        x_vals = np.array(x_vals)
-        y_vals = np.array(y_vals)
-        z_vals = np.array(z_vals)
+    if results:
+        pointsx, pointsy, pointsz = zip(*results)
+        pointsx = np.array(pointsx)
+        pointsy = np.array(pointsy)
+        pointsz = np.array(pointsz)
+    else:
+        pointsx = np.array([])
+        pointsy = np.array([])
+        pointsz = np.array([])
 
-        result = []
-        if x_vals[0,-1] < 2:
-            endpoints.append([x_vals[0, -1].item(), y_vals[0, -1].item(), z_vals[0, -1].item()])
-            pointsx.append([x_vals[0, -1].item()])
-            pointsy.append([y_vals[0, -1].item()])
-            pointsz.append([z_vals[0, -1].item()])
-            result.append([x_vals[0, -1].item(), y_vals[0, -1].item(), z_vals[0, -1].item()])
-            result.append([x_vals[0, -1].item()])
-            result.append([y_vals[0, -1].item()])
-            result.append([z_vals[0, -1].item()])
-            # q.put(result)
-        # return result  
-
-    # p_arr = []
-    # for i in range(inner_mesh.shape[0]):
-    #     p_arr.append(Process(target = running_sum, args = (i,)))
-
-    # for i in p_arr:
-    #     i.start()
-
-    # for i in p_arr:
-    #     i.join()
-    # for i in range(len(p_arr)):
-    #     (a,b,c,d)=q.get()
-    #     pointsx.append(b)
-    #     pointsy.append(c)
-    #     pointsz.append(d)
-
-    pointsx = np.array(pointsx)
-    pointsy = np.array(pointsy)
-    pointsz = np.array(pointsz)
-
-    end_time = time.time()
-    elapsed_time = end_time - start_time
-    print(f"Elapsed time: {elapsed_time:.4f} seconds")
+    elapsed_time = time.time() - start_time
+    print(f"Elapsed time: {elapsed_time:.4f} seconds", flush = True)
     return pointsx, pointsy, pointsz
-
+    
 def find_seed_end(rev_pointsy, rev_pointsz, seeds, contour):
     contour = contour[:, 1:3]
     contour[:,[1,0]] = contour[:,[0,1]]
@@ -490,6 +468,7 @@ def find_seed_end(rev_pointsy, rev_pointsz, seeds, contour):
     return valid_seeds
 
 def plot_inlet(contour, inner_mesh):
+    print('Plotting Inlet Contour and Mesh', flush = True)
     plt.fill(contour[:,1],contour[:,2])
     plt.gca().set_aspect('equal')
     plt.xlim(-0.5, 0.5)
@@ -507,13 +486,18 @@ img_fname = sys.argv[1] # File name of input image
 solname = sys.argv[2] # base name of .xdmf file (test.xdmf is just test)
 funcname = sys.argv[3] # Name of function ("Velocity" or "Pressure", etc.)
 funcdim = 3 # Dimension of solution (2 or 3)
-print("Accepted Inputs")
+
+
+print("Accepted Inputs", flush = True)
+num_cpus = cpu_count()
+print(f"Number of CPUs: {num_cpus}", flush = True)
 
 contour = update_contour(img_fname)
 
 mesh, uh, uvw_data, xyz_data = read_mesh_and_function(solname, funcname, funcdim)
 bb_tree = geometry.bb_tree(mesh, mesh.topology.dim)
 inner_mesh = inner_contour_mesh_func(img_fname)
+
 # plot_inlet(contour, inner_mesh)
 
 pointsx, pointsy, pointsz = run_streamtrace(inner_mesh)

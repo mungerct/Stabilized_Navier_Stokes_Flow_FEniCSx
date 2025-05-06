@@ -278,7 +278,7 @@ def solve_navier_stokes(a, w, dF, bcs, W, snes_ksp_type, comm, rank):
     snes.getKSP().setTolerances(rtol=1e-8)
 
     if rank == 0:
-        print("Running SNES solver", flush=True)
+        print("Running SNES solver", flush = True)
 
     comm.barrier()
     t_start = time.time()

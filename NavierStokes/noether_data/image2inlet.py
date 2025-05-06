@@ -177,8 +177,6 @@ def outer_contour_to_gmsh(contour, mesh_lc, p_idx=1, l_idx=1, loop_idx=1):
     gmsh.model.addPhysicalGroup(1, list(range(1 , l_idx + 2)), name = "walls")
     gmsh.model.addPhysicalGroup(2, [1], name = "outer_surface") 
     
-    
-    
     gmsh.model.mesh.generate(2)
     gmsh.write("outer_contour_mesh.msh")
     gmsh.write('outer_contour.geo_unrolled')

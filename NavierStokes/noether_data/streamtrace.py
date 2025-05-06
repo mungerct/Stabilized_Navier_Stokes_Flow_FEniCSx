@@ -37,6 +37,7 @@ from scipy.integrate import solve_ivp
 from image2inlet import solve_inlet_profiles
 import alphashape
 from descartes import PolygonPatch
+from multiprocessing import Process, Queue
 
 comm = MPI.COMM_WORLD
 
@@ -176,7 +177,7 @@ def read_mesh_and_function(fname_base, function_name, function_dim):
     h5_filename = f"{fname_base}.h5"
     with h5py.File(h5_filename, "r") as h5f:
         #print("Datasets in HDF5 file:", list(h5f.keys()))
-        print("Data keys in the 'Function' group:", list(h5f["Function"].keys()))
+        # print("Data keys in the 'Function' group:", list(h5f["Function"].keys()))
         func_group = h5f["Function"]
         #print("Keys in 'Function':", list(func_group.keys()))
 
@@ -386,9 +387,9 @@ def expand_streamtace(pointsy, pointsz, contour):
 
     return min(x), max(x), min(y), max(y)
 
-def make_rev_streamtrace_seeds(minx, maxx, miny, maxy):
-    x = np.linspace(minx, maxx, num = 25)
-    y = np.linspace(miny, maxy, num = 25)
+def make_rev_streamtrace_seeds(minx, maxx, miny, maxy, numpoints):
+    x = np.linspace(minx, maxx, num = numpoints)
+    y = np.linspace(miny, maxy, num = numpoints)
     x, y = np.meshgrid(x, y)
     points = np.stack((x, y), axis=-1)
     array = points.reshape(-1, 2)
@@ -398,13 +399,18 @@ def make_rev_streamtrace_seeds(minx, maxx, miny, maxy):
     return new_arr # Array of new seeds for reverse stream trace
 
 def run_reverse_streamtrace(inner_mesh):
-    print('Streamtracing',flush=True)
+    start_time = time.time()
+    print('Reverse Streamtracing', flush = True)
     # Function to run the streamtrace at every point in the inner mesh
     t_span = (0, 20)
     endpoints = []
     pointsx = []
     pointsy = []
     pointsz = []
+
+    # q = Queue()
+
+    # def running_sum(i):
 
     for i in range(inner_mesh.shape[0]):
         velocity_magnitude_event.terminal = True  # stops integration when event is triggered
@@ -414,7 +420,7 @@ def run_reverse_streamtrace(inner_mesh):
         events_list = (reverse_position_event)
         # print(inner_mesh)
         row = inner_mesh[i,:]
-        sol = solve_ivp(velfunc_reverese, t_span, row, method='RK45', events = events_list, max_step = 0.05)
+        sol = solve_ivp(velfunc_reverese, t_span, row, method='RK45', events = events_list, max_step = 0.125)
         t_vals = []
         x_vals = []
         y_vals = []
@@ -428,18 +434,46 @@ def run_reverse_streamtrace(inner_mesh):
         y_vals = np.array(y_vals)
         z_vals = np.array(z_vals)
 
+        result = []
         if x_vals[0,-1] < 2:
             endpoints.append([x_vals[0, -1].item(), y_vals[0, -1].item(), z_vals[0, -1].item()])
             pointsx.append([x_vals[0, -1].item()])
             pointsy.append([y_vals[0, -1].item()])
             pointsz.append([z_vals[0, -1].item()])
+            result.append([x_vals[0, -1].item(), y_vals[0, -1].item(), z_vals[0, -1].item()])
+            result.append([x_vals[0, -1].item()])
+            result.append([y_vals[0, -1].item()])
+            result.append([z_vals[0, -1].item()])
+            # q.put(result)
+        # return result  
 
+    # p_arr = []
+    # for i in range(inner_mesh.shape[0]):
+    #     p_arr.append(Process(target = running_sum, args = (i,)))
+
+    # for i in p_arr:
+    #     i.start()
+
+    # for i in p_arr:
+    #     i.join()
+    # for i in range(len(p_arr)):
+    #     (a,b,c,d)=q.get()
+    #     pointsx.append(b)
+    #     pointsy.append(c)
+    #     pointsz.append(d)
+
+    pointsx = np.array(pointsx)
     pointsy = np.array(pointsy)
     pointsz = np.array(pointsz)
+
+    end_time = time.time()
+    elapsed_time = end_time - start_time
+    print(f"Elapsed time: {elapsed_time:.4f} seconds")
     return pointsx, pointsy, pointsz
 
 def find_seed_end(rev_pointsy, rev_pointsz, seeds, contour):
     contour = contour[:, 1:3]
+    contour[:,[1,0]] = contour[:,[0,1]]
     valid_seeds = []
 
     for i in range(seeds.shape[0]):
@@ -449,6 +483,7 @@ def find_seed_end(rev_pointsy, rev_pointsz, seeds, contour):
 
         if is_inside[0]: # if the point is inside the contour
             valid_seeds.append(seeds[i])
+    
     valid_seeds = np.array(valid_seeds)
     valid_seeds = valid_seeds[:, 1:3]
 
@@ -472,6 +507,7 @@ img_fname = sys.argv[1] # File name of input image
 solname = sys.argv[2] # base name of .xdmf file (test.xdmf is just test)
 funcname = sys.argv[3] # Name of function ("Velocity" or "Pressure", etc.)
 funcdim = 3 # Dimension of solution (2 or 3)
+print("Accepted Inputs")
 
 contour = update_contour(img_fname)
 
@@ -481,16 +517,16 @@ inner_mesh = inner_contour_mesh_func(img_fname)
 # plot_inlet(contour, inner_mesh)
 
 pointsx, pointsy, pointsz = run_streamtrace(inner_mesh)
-plot_streamtrace(pointsy, pointsz, contour)
+# plot_streamtrace(pointsy, pointsz, contour)
 minx, maxx, miny, maxy = expand_streamtace(pointsy, pointsz, contour)
-seeds = make_rev_streamtrace_seeds(minx, maxx, miny, maxy)
+seeds = make_rev_streamtrace_seeds(minx, maxx, miny, maxy, 400)
 np.savetxt("rev_seeds.csv", seeds, delimiter=",")
-
 
 rev_pointsx, rev_pointsy, rev_pointsz = run_reverse_streamtrace(seeds)
 final_output = find_seed_end(rev_pointsy, rev_pointsz, seeds, contour)
+np.savetxt("final_output.csv", final_output, delimiter=",")
 
-plt.scatter(final_output[:, 0], final_output[:, 1])
+plt.scatter(final_output[:, 0], final_output[:, 1], marker = ".")
 plt.gca().set_aspect('equal')
 plt.show()
 # plot_streamtrace(pointsy, pointsz, contour)

@@ -284,44 +284,51 @@ def inner_contour_mesh_func(img_fname):
     inner_mesh = inner_mesh.geometry.x
     return inner_mesh
 
-def run_streamtrace(inner_mesh):
-    print('Foward streamtracing', flush = True)
-    # Function to run the streamtrace at every point in the inner mesh
+def streamtrace_pool(row):
     t_span = (0, 20)
-    endpoints = []
-    pointsx = []
-    pointsy = []
-    pointsz = []
+    velocity_magnitude_event.terminal = True  # stops integration when event is triggered
+    velocity_magnitude_event.direction = -1   # only when crossing threshold from above
+    position_event.terminal = True
+    position_event.direction = 1
+    events_list = (velocity_magnitude_event, position_event)
 
-    for i in range(inner_mesh.shape[0]):
-        velocity_magnitude_event.terminal = True  # stops integration when event is triggered
-        velocity_magnitude_event.direction = -1   # only when crossing threshold from above
-        position_event.terminal = True
-        position_event.direction = 1
-        events_list = (velocity_magnitude_event, position_event)
-        # print(inner_mesh, flush = True)
-        row = inner_mesh[i,:]
-        sol = solve_ivp(velfunc, t_span, row, method='RK45', events = events_list, max_step = 0.25)
-        t_vals = []
-        x_vals = []
-        y_vals = []
-        z_vals = []
-        endpoint = []
-        t_vals.append(sol.t)
-        x_vals.append(sol.y[0])
-        y_vals.append(sol.y[1])
-        z_vals.append(sol.y[2])
-        x_vals = np.array(x_vals)
-        y_vals = np.array(y_vals)
-        z_vals = np.array(z_vals)
-        if x_vals[0,-1] > 2:
-            endpoints.append([x_vals[0, -1].item(), y_vals[0, -1].item(), z_vals[0, -1].item()])
-            pointsx.append([x_vals[0, -1].item()])
-            pointsy.append([y_vals[0, -1].item()])
-            pointsz.append([z_vals[0, -1].item()])
+    sol = solve_ivp(velfunc, t_span, row, method='RK45', events=events_list, max_step=0.125)
 
-    pointsy = np.array(pointsy)
-    pointsz = np.array(pointsz)
+    x_vals = np.array(sol.y[0])
+    y_vals = np.array(sol.y[1])
+    z_vals = np.array(sol.y[2])
+
+    if x_vals[-1] > 0.5:
+        return (
+            [x_vals[-1]],
+            [y_vals[-1]],
+            [z_vals[-1]]
+        )
+    else:
+        return None
+
+def run_streamtrace(inner_mesh):
+    start_time = time.time()
+    print('Streamtracing', flush=True)
+
+    with Pool(processes = cpu_count()) as pool:
+        results = pool.map(streamtrace_pool, [inner_mesh[i, :] for i in range(inner_mesh.shape[0])])
+
+    # Filter out None results
+    results = [res for res in results if res is not None]
+
+    if results:
+        pointsx, pointsy, pointsz = zip(*results)
+        pointsx = np.array(pointsx)
+        pointsy = np.array(pointsy)
+        pointsz = np.array(pointsz)
+    else:
+        pointsx = np.array([])
+        pointsy = np.array([])
+        pointsz = np.array([])
+
+    elapsed_time = time.time() - start_time
+    print(f"Elapsed time: {elapsed_time:.4f} seconds", flush = True)
     return pointsx, pointsy, pointsz
 
 def plot_streamtrace(pointsy, pointsz, contour):
@@ -402,7 +409,7 @@ def make_rev_streamtrace_seeds(minx, maxx, miny, maxy, numpoints):
 
     return new_arr # Array of new seeds for reverse stream trace
 
-def process_row(row):
+def reverse_streamtrace_pool(row):
     t_span = (0, 20)
     velocity_magnitude_event.terminal = True
     velocity_magnitude_event.direction = -1
@@ -430,7 +437,7 @@ def run_reverse_streamtrace(inner_mesh):
     print('Reverse Streamtracing', flush=True)
 
     with Pool(processes = cpu_count()) as pool:
-        results = pool.map(process_row, [inner_mesh[i, :] for i in range(inner_mesh.shape[0])])
+        results = pool.map(reverse_streamtrace_pool, [inner_mesh[i, :] for i in range(inner_mesh.shape[0])])
 
     # Filter out None results
     results = [res for res in results if res is not None]
@@ -503,7 +510,7 @@ inner_mesh = inner_contour_mesh_func(img_fname)
 pointsx, pointsy, pointsz = run_streamtrace(inner_mesh)
 # plot_streamtrace(pointsy, pointsz, contour)
 minx, maxx, miny, maxy = expand_streamtace(pointsy, pointsz, contour)
-seeds = make_rev_streamtrace_seeds(minx, maxx, miny, maxy, 400)
+seeds = make_rev_streamtrace_seeds(minx, maxx, miny, maxy, 25)
 np.savetxt("rev_seeds.csv", seeds, delimiter=",")
 
 rev_pointsx, rev_pointsy, rev_pointsz = run_reverse_streamtrace(seeds)

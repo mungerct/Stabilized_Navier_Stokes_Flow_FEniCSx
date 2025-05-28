@@ -214,6 +214,7 @@ def solve_stokes_problem(a, L, bcs, W, Uold=None, msh=None):
     return U
 
 def define_navier_stokes_form(W, msh, Re, U_stokes=None, U_coarse=None):
+    # Create the weak form of the Naiver-Stokes equation, a GLS stabilization method is used to help find a solution
     dx = ufl.dx(metadata={'quadrature_degree': 2})
     nu = 1 / Re
     V_NS, _ = W.sub(0).collapse()
@@ -229,7 +230,7 @@ def define_navier_stokes_form(W, msh, Re, U_stokes=None, U_coarse=None):
     dxi_dx = dxi_dy * inv(grad(x))
     G = (dxi_dx.T) * dxi_dx
 
-    Ci = 36.0
+    Ci = 36.0 # Stabilization constant, value is used in literature, it isn't exact and mirror adjustments will still yield results
     tau_SUPS = 1.0 / sqrt(inner(u, G * u) + Ci * (nu ** 2) * inner(G, G))
 
     sigma = 2 * nu * ufl.sym(grad(u)) - p * ufl.Identity(len(u))
@@ -344,7 +345,7 @@ def main():
     comm = MPI.COMM_WORLD
     rank = comm.Get_rank()
     Re, img_fname, flowrate_ratio, channel_mesh_size = parse_arguments()
-    folder_name = f'NSChannelFlow_RE{Re}_MeshLC{channel_mesh_size}'
+    folder_name = f'NSChannelFlow_RE{Re}_MeshLC{channel_mesh_size}' # Make folder to store results
     create_output_directory(folder_name, rank)
     
     # Solve Stokes Flow

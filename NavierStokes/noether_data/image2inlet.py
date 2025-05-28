@@ -33,11 +33,8 @@ from dolfinx.plot import vtk_mesh
 from shapely.geometry import Point
 from shapely.geometry.polygon import Polygon
 
-
 comm = MPI.COMM_WORLD
 rank = comm.Get_rank()
-
-
 
 def load_image(img_fname): # Want this entire function
     #print('Loading image {}'.format(img_fname))

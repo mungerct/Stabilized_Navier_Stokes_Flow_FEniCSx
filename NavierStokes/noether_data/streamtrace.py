@@ -246,7 +246,7 @@ def velfunc(t, x):
         vel = uh.eval(x, [cell_index])
         # print(f'P:{x}, V:{vel}', flush = True)
         return vel
-    
+
 def velfunc_reverese(t, x):
     # This is the velocity function, it finds the velocity at a given point in the domain
     cell_candidate = geometry.compute_collisions_points(bb_tree, x) # Choose one of the cells that contains the point
@@ -349,12 +349,14 @@ def plot_streamtrace(pointsy, pointsz, contour):
     plt.gca().set_aspect('equal')
     plt.xlim(-0.3, 0.3)
     plt.ylim(-0.3, 0.3)
+    plt.axis('off')
     plt.show()
 
     plt.scatter(pointsy, pointsz, marker = 'o') # Make stream trace outlet profile
     plt.gca().set_aspect('equal')
     plt.xlim(-0.3, 0.3)
     plt.ylim(-0.3, 0.3)
+    plt.axis('off')
     plt.show()
 
     return(plt)
@@ -510,7 +512,7 @@ inner_mesh = inner_contour_mesh_func(img_fname)
 pointsx, pointsy, pointsz = run_streamtrace(inner_mesh)
 # plot_streamtrace(pointsy, pointsz, contour)
 minx, maxx, miny, maxy = expand_streamtace(pointsy, pointsz, contour)
-seeds = make_rev_streamtrace_seeds(minx, maxx, miny, maxy, 25)
+seeds = make_rev_streamtrace_seeds(minx, maxx, miny, maxy, 400)
 np.savetxt("rev_seeds.csv", seeds, delimiter=",")
 
 rev_pointsx, rev_pointsy, rev_pointsz = run_reverse_streamtrace(seeds)
@@ -519,5 +521,6 @@ np.savetxt("final_output.csv", final_output, delimiter=",")
 
 plt.scatter(final_output[:, 0], final_output[:, 1], marker = ".")
 plt.gca().set_aspect('equal')
+plt.axis('off')
 plt.show()
 # plot_streamtrace(pointsy, pointsz, contour)

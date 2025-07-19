@@ -1,6 +1,9 @@
 #!/usr/bin/env python 
 # image 2 
 import time
+import sys
+import os
+os.environ["GMSH_FORCE_QUIET"] = "1"
 import gmsh
 import numpy as np
 from PIL import Image
@@ -21,9 +24,6 @@ import ufl
 from dolfinx.io import gmshio
 from dolfinx.fem.petsc import LinearProblem
 from mpi4py import MPI
-
-import sys
-import os
 
 # Visualization
 import pyvista

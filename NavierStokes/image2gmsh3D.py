@@ -9,6 +9,7 @@ import sys
 import os
 import time
 from rdp import rdp
+os.environ["GMSH_FORCE_QUIET"] = "1"
 import gmsh
 
 from matplotlib import pyplot as plt

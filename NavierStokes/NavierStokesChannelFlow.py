@@ -83,6 +83,9 @@ def parse_arguments():
 
     Re = int(sys.argv[1])
     img_fname = sys.argv[2]
+    img_fname = img_fname.removeprefix(".")
+    current_dir = os.getcwd()
+    img_fname = current_dir + img_fname
     flowrate_ratio = float(sys.argv[3])
     channel_mesh_size = float(sys.argv[4]) if len(sys.argv) == 5 else 0.1
 
@@ -340,14 +343,31 @@ def write_run_metadata(FolderName, Re, img_fname, flowrate_ratio, channel_mesh_s
         file.write(f"Velocity DOFs: {V.dofmap.index_map.size_local}\n")
         file.write(f"{comm.Get_size()} Cores Used\n")
 
+def make_output_folder(Re, img_fname, channel_mesh_size):
+    # Create output folder
+    img_name = img_fname.removesuffix(".png")
+    img_name = img_name.removeprefix(os.getcwd())
+    img_name = img_name.removeprefix("/InletImages/")
+    channel_mesh_size_str = str(channel_mesh_size)
+    channel_mesh_size_str = channel_mesh_size_str.replace(".", "")
+
+
+    os.chdir(os.path.join(os.getcwd(), 'noether_data'))
+    folder_name = f'NSChannelFlow_RE{Re}_MeshLC{channel_mesh_size_str}_{img_name}' # Make folder to store results
+    create_output_directory(folder_name, rank)
+
+    return folder_name
+
 def main():
     # Get Inputs
     comm = MPI.COMM_WORLD
     rank = comm.Get_rank()
     Re, img_fname, flowrate_ratio, channel_mesh_size = parse_arguments()
-    folder_name = f'NSChannelFlow_RE{Re}_MeshLC{channel_mesh_size}' # Make folder to store results
-    create_output_directory(folder_name, rank)
-    
+    folder_name = make_output_folder(Re, img_fname, channel_mesh_size)
+    print(folder_name)
+
+    AAA
+
     # Solve Stokes Flow
     uh_1, msh_1, uh_2, msh_2 = generate_inlet_profiles(img_fname, flowrate_ratio)
     msh, ft = generate_mesh(img_fname, 0.1)

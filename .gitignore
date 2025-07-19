@@ -4,3 +4,5 @@
 *.msh
 *.ipynb_checkpoints
 *.geo_unrolled
+*.xao
+*:Zone.Identifier

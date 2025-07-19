@@ -495,7 +495,8 @@ def plot_inlet(contour, inner_mesh):
     plt.show()
 
 def parse_arguments():
-    if len(sys.argv) not in [3]:
+    print(len(sys.argv))
+    if len(sys.argv) not in [4]:
         raise ValueError("Usage: script.py <img_fname> <solname> <funcname>")
     img_fname = sys.argv[1] # File name of input image
     solname = sys.argv[2] # base name of .xdmf file (test.xdmf is just test)
@@ -506,11 +507,16 @@ def parse_arguments():
     num_cpus = cpu_count()
     print(f"Number of CPUs: {num_cpus}", flush = True)
 
-    return img_fname, solname, funcname
+    return img_fname, solname, funcname, funcdim
 
 def main():
-
-    contour = update_contour(img_fname)
+    global bb_tree
+    global mesh
+    global uh
+    global uvw_data
+    global xyz_data
+    img_fname, solname, funcname, funcdim = parse_arguments()
+    contour = update_contour(img_fname) 
 
     mesh, uh, uvw_data, xyz_data = read_mesh_and_function(solname, funcname, funcdim)
     bb_tree = geometry.bb_tree(mesh, mesh.topology.dim)
@@ -521,7 +527,7 @@ def main():
     pointsx, pointsy, pointsz = run_streamtrace(inner_mesh)
     # plot_streamtrace(pointsy, pointsz, contour)
     minx, maxx, miny, maxy = expand_streamtace(pointsy, pointsz, contour)
-    seeds = make_rev_streamtrace_seeds(minx, maxx, miny, maxy, 400)
+    seeds = make_rev_streamtrace_seeds(minx, maxx, miny, maxy, 100)
     np.savetxt("rev_seeds.csv", seeds, delimiter=",")
 
     rev_pointsx, rev_pointsy, rev_pointsz = run_reverse_streamtrace(seeds)

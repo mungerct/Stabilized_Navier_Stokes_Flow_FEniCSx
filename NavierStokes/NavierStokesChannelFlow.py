@@ -364,9 +364,6 @@ def main():
     rank = comm.Get_rank()
     Re, img_fname, flowrate_ratio, channel_mesh_size = parse_arguments()
     folder_name = make_output_folder(Re, img_fname, channel_mesh_size)
-    print(folder_name)
-
-    AAA
 
     # Solve Stokes Flow
     uh_1, msh_1, uh_2, msh_2 = generate_inlet_profiles(img_fname, flowrate_ratio)

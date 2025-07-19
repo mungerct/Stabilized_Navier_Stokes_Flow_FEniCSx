@@ -6,3 +6,4 @@
 *.geo_unrolled
 *.xao
 *:Zone.Identifier
+*NSChannelFlow_*

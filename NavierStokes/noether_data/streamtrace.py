@@ -530,13 +530,35 @@ def move_directory(img_fname):
     folder = os.path.dirname(img_fname)
     os.chdir(folder)
 
-def save_figs(img_fname, inner_contour_fig, inner_contour_mesh_fig):
+def save_figs(img_fname, inner_contour_fig, inner_contour_mesh_fig, seeds, final_output, rev_streamtrace_fig, num_seeds):
     move_directory(img_fname)
     print('Saving Figures')
     inner_contour_fig.savefig("inner_contour.svg")
     inner_contour_mesh_fig.savefig("inner_mesh.svg")
+    print(img_fname)
+    img_fname = os.path.basename(img_fname)
+    print(img_fname)
+    img_fname = img_fname.removesuffix(".png")
+    print(img_fname)
+    rev_streamtrace_fig.savefig(f"rev_trace_{img_fname}_{num_seeds}.svg")
     np.savetxt("rev_seeds.csv", seeds, delimiter=",")
     np.savetxt("final_output.csv", final_output, delimiter=",")
+
+def plot_rev_streamtrace(final_output, limits):
+    print('Plotting Reverse Streamtrace', flush = True)
+
+    rev_streamtrace_fig, ax = plt.subplots()
+    ax.scatter(final_output[:, 0], final_output[:, 1], marker = ".")
+    ax.set_aspect('equal')
+    ax.set_xlim(-1*limits, limits)
+    ax.set_ylim(-1*limits, limits)
+    ax.set_xticks([])
+    ax.set_yticks([])
+    ax.set_xticklabels([])
+    ax.set_yticklabels([])
+    # plt.show()
+
+    return rev_streamtrace_fig
 
 def main():
     global bb_tree
@@ -544,32 +566,30 @@ def main():
     global uh
     global uvw_data
     global xyz_data
-    img_fname, solname, funcname, funcdim = parse_arguments()
 
+    limits = 0.5
+    num_seeds = 50
+
+    img_fname, solname, funcname, funcdim = parse_arguments()
     contour = update_contour(img_fname)
 
     mesh, uh, uvw_data, xyz_data = read_mesh_and_function(solname, funcname, funcdim)
     bb_tree = geometry.bb_tree(mesh, mesh.topology.dim)
     inner_mesh = inner_contour_mesh_func(img_fname)
 
-    limits = 0.5
     inner_contour_fig, inner_contour_mesh_fig = plot_inlet(contour, inner_mesh, limits)
 
     pointsx, pointsy, pointsz = run_streamtrace(inner_mesh)
     # plot_streamtrace(pointsy, pointsz, contour, limits)
     minx, maxx, miny, maxy = expand_streamtace(pointsy, pointsz, contour)
-    seeds = make_rev_streamtrace_seeds(minx, maxx, miny, maxy, 50)
+    seeds = make_rev_streamtrace_seeds(minx, maxx, miny, maxy, num_seeds)
 
     rev_pointsx, rev_pointsy, rev_pointsz = run_reverse_streamtrace(seeds)
     final_output = find_seed_end(rev_pointsy, rev_pointsz, seeds, contour)
 
-    plt.scatter(final_output[:, 0], final_output[:, 1], marker = ".")
-    plt.gca().set_aspect('equal')
-    plt.axis('off')
-    plt.show()
-
     # plot_streamtrace(rev_pointsy, rev_pointsz, contour, limits)
-    save_figs(img_fname, inner_contour_fig, inner_contour_mesh_fig, seeds, final_output)
+    rev_streamtrace_fig = plot_rev_streamtrace(final_output, limits)
+    save_figs(img_fname, inner_contour_fig, inner_contour_mesh_fig, seeds, final_output, rev_streamtrace_fig, num_seeds)
 
 if __name__ == "__main__":
     main()

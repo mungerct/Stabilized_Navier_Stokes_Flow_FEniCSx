@@ -35,6 +35,7 @@ from dolfinx.fem.petsc import (apply_lifting, assemble_matrix, assemble_vector,
                                create_vector, create_matrix, set_bc)
 from dolfinx.io import XDMFFile
 from basix.ufl import element as VectorElement
+from PIL import Image
 
 class NonlinearPDE_SNESProblem:
     # Directly create the Petsc nonlinear solver
@@ -333,7 +334,7 @@ def save_navier_stokes_solution(u, p, msh, FolderName, Re):
         ufile_xdmf.write_mesh(msh)
         ufile_xdmf.write_function(u_out)
 
-def write_run_metadata(FolderName, Re, img_fname, flowrate_ratio, channel_mesh_size, V, Q):
+def write_run_metadata(FolderName, Re, img_fname, flowrate_ratio, channel_mesh_size, V, Q, img_name):
     with open(f"{FolderName}/RunParameters.txt", "w") as file:
         file.write(f"Re={Re}\n")
         file.write(f"img_filename={img_fname}\n")
@@ -342,6 +343,11 @@ def write_run_metadata(FolderName, Re, img_fname, flowrate_ratio, channel_mesh_s
         file.write(f"Pressure DOFs: {Q.dofmap.index_map.size_local}\n")
         file.write(f"Velocity DOFs: {V.dofmap.index_map.size_local}\n")
         file.write(f"{comm.Get_size()} Cores Used\n")
+    
+    img = Image.open(img_fname)
+    os.chdir(FolderName)
+    img.save(f"{img_name}.png", format="PNG")
+
 
 def make_output_folder(Re, img_fname, channel_mesh_size):
     # Create output folder
@@ -356,14 +362,14 @@ def make_output_folder(Re, img_fname, channel_mesh_size):
     folder_name = f'NSChannelFlow_RE{Re}_MeshLC{channel_mesh_size_str}_{img_name}' # Make folder to store results
     create_output_directory(folder_name, rank)
 
-    return folder_name
+    return folder_name, img_name
 
 def main():
     # Get Inputs
     comm = MPI.COMM_WORLD
     rank = comm.Get_rank()
     Re, img_fname, flowrate_ratio, channel_mesh_size = parse_arguments()
-    folder_name = make_output_folder(Re, img_fname, channel_mesh_size)
+    folder_name, img_name = make_output_folder(Re, img_fname, channel_mesh_size)
 
     # Solve Stokes Flow
     uh_1, msh_1, uh_2, msh_2 = generate_inlet_profiles(img_fname, flowrate_ratio)
@@ -385,7 +391,7 @@ def main():
     w, u, p = solve_navier_stokes(a, w, dF, bcs, W, snes_ksp_type, comm, rank)
 
     save_navier_stokes_solution(u, p, msh, folder_name, Re)
-    write_run_metadata(folder_name, Re, img_fname, flowrate_ratio, channel_mesh_size, V, Q)
+    write_run_metadata(folder_name, Re, img_fname, flowrate_ratio, channel_mesh_size, V, Q, img_name)
 
     return w, W, msh
 

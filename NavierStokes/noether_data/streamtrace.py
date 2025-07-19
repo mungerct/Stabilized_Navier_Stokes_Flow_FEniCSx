@@ -335,7 +335,7 @@ def run_streamtrace(inner_mesh):
     print(f"Elapsed time: {elapsed_time:.4f} seconds", flush = True)
     return pointsx, pointsy, pointsz
 
-def plot_streamtrace(pointsy, pointsz, contour):
+def plot_streamtrace(pointsy, pointsz, contour, limits):
     pointsy = np.squeeze(pointsy)
     pointsz = np.squeeze(pointsz)
 
@@ -351,16 +351,22 @@ def plot_streamtrace(pointsy, pointsz, contour):
     # plt.scatter(x, y, marker = '.', color = 'b')
     plt.fill(x, y)
     plt.gca().set_aspect('equal')
-    plt.xlim(-0.3, 0.3)
-    plt.ylim(-0.3, 0.3)
-    plt.axis('off')
+    ax.set_xlim(-1*limits, limits)
+    ax.set_ylim(-1*limits, limits)
+    ax.set_xticks([])
+    ax.set_yticks([])
+    ax.set_xticklabels([])
+    ax.set_yticklabels([])
     plt.show()
 
     plt.scatter(pointsy, pointsz, marker = 'o') # Make stream trace outlet profile
     plt.gca().set_aspect('equal')
-    plt.xlim(-0.3, 0.3)
-    plt.ylim(-0.3, 0.3)
-    plt.axis('off')
+    ax.set_xlim(-1*limits, limits)
+    ax.set_ylim(-1*limits, limits)
+    ax.set_xticks([])
+    ax.set_yticks([])
+    ax.set_xticklabels([])
+    ax.set_yticklabels([])
     plt.show()
 
     return(plt)
@@ -480,19 +486,29 @@ def find_seed_end(rev_pointsy, rev_pointsz, seeds, contour):
 
     return valid_seeds
 
-def plot_inlet(contour, inner_mesh):
+def plot_inlet(contour, inner_mesh, limits):
     print('Plotting Inlet Contour and Mesh', flush = True)
-    plt.fill(contour[:,1],contour[:,2])
-    plt.gca().set_aspect('equal')
-    plt.xlim(-0.5, 0.5)
-    plt.ylim(-0.5, 0.5)
-    plt.show()
+    inner_contour_fig, ax = plt.subplots() 
+    ax.fill(contour[:,1],contour[:,2])
+    ax.set_aspect('equal')
+    ax.set_xlim(-1*limits, limits)
+    ax.set_ylim(-1*limits, limits)
+    ax.set_xticks([])
+    ax.set_yticks([])
+    ax.set_xticklabels([])
+    ax.set_yticklabels([])
 
-    plt.scatter(inner_mesh[:,1], inner_mesh[:,2])
-    plt.gca().set_aspect('equal')
-    plt.xlim(-0.5, 0.5)
-    plt.ylim(-0.5, 0.5)
-    plt.show()
+    inner_contour_mesh_fig, ax = plt.subplots()
+    ax.scatter(inner_mesh[:,1], inner_mesh[:,2])
+    ax.set_aspect('equal')
+    ax.set_xlim(-1*limits, limits)
+    ax.set_ylim(-1*limits, limits)
+    ax.set_xticks([])
+    ax.set_yticks([])
+    ax.set_xticklabels([])
+    ax.set_yticklabels([])
+
+    return inner_contour_fig, inner_contour_mesh_fig
 
 def parse_arguments():
     print(len(sys.argv))
@@ -509,6 +525,19 @@ def parse_arguments():
 
     return img_fname, solname, funcname, funcdim
 
+def move_directory(img_fname):
+    curr_dir = os.getcwd()
+    folder = os.path.dirname(img_fname)
+    os.chdir(folder)
+
+def save_figs(img_fname, inner_contour_fig, inner_contour_mesh_fig):
+    move_directory(img_fname)
+    print('Saving Figures')
+    inner_contour_fig.savefig("inner_contour.svg")
+    inner_contour_mesh_fig.savefig("inner_mesh.svg")
+    np.savetxt("rev_seeds.csv", seeds, delimiter=",")
+    np.savetxt("final_output.csv", final_output, delimiter=",")
+
 def main():
     global bb_tree
     global mesh
@@ -516,29 +545,31 @@ def main():
     global uvw_data
     global xyz_data
     img_fname, solname, funcname, funcdim = parse_arguments()
-    contour = update_contour(img_fname) 
+
+    contour = update_contour(img_fname)
 
     mesh, uh, uvw_data, xyz_data = read_mesh_and_function(solname, funcname, funcdim)
     bb_tree = geometry.bb_tree(mesh, mesh.topology.dim)
     inner_mesh = inner_contour_mesh_func(img_fname)
 
-    # plot_inlet(contour, inner_mesh)
+    limits = 0.5
+    inner_contour_fig, inner_contour_mesh_fig = plot_inlet(contour, inner_mesh, limits)
 
     pointsx, pointsy, pointsz = run_streamtrace(inner_mesh)
-    # plot_streamtrace(pointsy, pointsz, contour)
+    # plot_streamtrace(pointsy, pointsz, contour, limits)
     minx, maxx, miny, maxy = expand_streamtace(pointsy, pointsz, contour)
-    seeds = make_rev_streamtrace_seeds(minx, maxx, miny, maxy, 100)
-    np.savetxt("rev_seeds.csv", seeds, delimiter=",")
+    seeds = make_rev_streamtrace_seeds(minx, maxx, miny, maxy, 50)
 
     rev_pointsx, rev_pointsy, rev_pointsz = run_reverse_streamtrace(seeds)
     final_output = find_seed_end(rev_pointsy, rev_pointsz, seeds, contour)
-    np.savetxt("final_output.csv", final_output, delimiter=",")
 
     plt.scatter(final_output[:, 0], final_output[:, 1], marker = ".")
     plt.gca().set_aspect('equal')
     plt.axis('off')
     plt.show()
-    # plot_streamtrace(pointsy, pointsz, contour)
+
+    # plot_streamtrace(rev_pointsy, rev_pointsz, contour, limits)
+    save_figs(img_fname, inner_contour_fig, inner_contour_mesh_fig, seeds, final_output)
 
 if __name__ == "__main__":
     main()

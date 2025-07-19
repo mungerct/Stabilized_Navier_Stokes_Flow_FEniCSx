@@ -13,6 +13,10 @@ from rdp import rdp
 import sys
 import os
 
+current_dir = os.path.dirname(os.path.abspath(__file__))
+parent_dir = os.path.dirname(current_dir)
+sys.path.append(parent_dir)
+
 # Inlet processing
 from shapely.geometry import Point
 from shapely.geometry.polygon import Polygon
@@ -490,37 +494,45 @@ def plot_inlet(contour, inner_mesh):
     plt.ylim(-0.5, 0.5)
     plt.show()
 
+def parse_arguments():
+    if len(sys.argv) not in [3]:
+        raise ValueError("Usage: script.py <img_fname> <solname> <funcname>")
+    img_fname = sys.argv[1] # File name of input image
+    solname = sys.argv[2] # base name of .xdmf file (test.xdmf is just test)
+    funcname = sys.argv[3] # Name of function ("Velocity" or "Pressure", etc.)
+    funcdim = 3 # Dimension of solution (2 or 3)
 
-img_fname = sys.argv[1] # File name of input image
-solname = sys.argv[2] # base name of .xdmf file (test.xdmf is just test)
-funcname = sys.argv[3] # Name of function ("Velocity" or "Pressure", etc.)
-funcdim = 3 # Dimension of solution (2 or 3)
+    print("Accepted Inputs", flush = True)
+    num_cpus = cpu_count()
+    print(f"Number of CPUs: {num_cpus}", flush = True)
 
+    return img_fname, solname, funcname
 
-print("Accepted Inputs", flush = True)
-num_cpus = cpu_count()
-print(f"Number of CPUs: {num_cpus}", flush = True)
+def main():
 
-contour = update_contour(img_fname)
+    contour = update_contour(img_fname)
 
-mesh, uh, uvw_data, xyz_data = read_mesh_and_function(solname, funcname, funcdim)
-bb_tree = geometry.bb_tree(mesh, mesh.topology.dim)
-inner_mesh = inner_contour_mesh_func(img_fname)
+    mesh, uh, uvw_data, xyz_data = read_mesh_and_function(solname, funcname, funcdim)
+    bb_tree = geometry.bb_tree(mesh, mesh.topology.dim)
+    inner_mesh = inner_contour_mesh_func(img_fname)
 
-# plot_inlet(contour, inner_mesh)
+    # plot_inlet(contour, inner_mesh)
 
-pointsx, pointsy, pointsz = run_streamtrace(inner_mesh)
-# plot_streamtrace(pointsy, pointsz, contour)
-minx, maxx, miny, maxy = expand_streamtace(pointsy, pointsz, contour)
-seeds = make_rev_streamtrace_seeds(minx, maxx, miny, maxy, 400)
-np.savetxt("rev_seeds.csv", seeds, delimiter=",")
+    pointsx, pointsy, pointsz = run_streamtrace(inner_mesh)
+    # plot_streamtrace(pointsy, pointsz, contour)
+    minx, maxx, miny, maxy = expand_streamtace(pointsy, pointsz, contour)
+    seeds = make_rev_streamtrace_seeds(minx, maxx, miny, maxy, 400)
+    np.savetxt("rev_seeds.csv", seeds, delimiter=",")
 
-rev_pointsx, rev_pointsy, rev_pointsz = run_reverse_streamtrace(seeds)
-final_output = find_seed_end(rev_pointsy, rev_pointsz, seeds, contour)
-np.savetxt("final_output.csv", final_output, delimiter=",")
+    rev_pointsx, rev_pointsy, rev_pointsz = run_reverse_streamtrace(seeds)
+    final_output = find_seed_end(rev_pointsy, rev_pointsz, seeds, contour)
+    np.savetxt("final_output.csv", final_output, delimiter=",")
 
-plt.scatter(final_output[:, 0], final_output[:, 1], marker = ".")
-plt.gca().set_aspect('equal')
-plt.axis('off')
-plt.show()
-# plot_streamtrace(pointsy, pointsz, contour)
+    plt.scatter(final_output[:, 0], final_output[:, 1], marker = ".")
+    plt.gca().set_aspect('equal')
+    plt.axis('off')
+    plt.show()
+    # plot_streamtrace(pointsy, pointsz, contour)
+
+if __name__ == "__main__":
+    main()

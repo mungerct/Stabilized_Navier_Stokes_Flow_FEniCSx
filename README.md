@@ -1,4 +1,4 @@
-# Stabilized Stokes Flow FEniCSx
+# Stabilized Navier Stokes Flow FEniCSx
 
 This is a repo for Stabilized Stokes Flow using FEniCSx by Caleb Munger.
 

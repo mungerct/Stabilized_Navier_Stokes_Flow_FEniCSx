@@ -175,9 +175,9 @@ def outer_contour_to_gmsh(contour, mesh_lc, p_idx=1, l_idx=1, loop_idx=1):
     
     
     gmsh.model.mesh.generate(2)
-    gmsh.write("outer_contour_mesh.msh")
-    gmsh.write('outer_contour.geo_unrolled')
-    print('Saved the Outer Contour Mesh')
+    #gmsh.write("outer_contour_mesh.msh")
+    #gmsh.write('outer_contour.geo_unrolled')
+    #print('Saved the Outer Contour Mesh')
  
     return gmsh.model
 
@@ -205,9 +205,9 @@ def inner_contour_to_gmsh(contour, mesh_lc):
     gmsh.model.addPhysicalGroup(1, list(range(1 , idx + 2)), name = "walls")
     gmsh.model.addPhysicalGroup(2, [1], name = "inner_surface") 
     gmsh.model.mesh.generate(2)
-    gmsh.write("inner_contour_mesh.msh")
-    gmsh.write('inner_contour.geo_unrolled')
-    print("Saved the Inner Contour Mesh")
+    #gmsh.write("inner_contour_mesh.msh")
+    #gmsh.write('inner_contour.geo_unrolled')
+    #print("Saved the Inner Contour Mesh")
     
     return gmsh.model
 
@@ -247,8 +247,11 @@ def solve_velocity_field(gmsh_model):
     # Find mesh area area
     one = fem.Constant(msh, PETSc.ScalarType(1))
     f = fem.form(one*ufl.dx)
-    area = fem.assemble_scalar(f)
-    #print(f'Area = {area}')
+    area = mesh_comm.allreduce(fem.assemble_scalar(f))
+    '''
+    if mesh_comm.rank == 0:
+        print(f'Area = {area}', flush=True)
+    '''
 
     # Outer no-slip
     noslip = fem.Constant(msh, PETSc.ScalarType(0))
@@ -265,8 +268,12 @@ def solve_velocity_field(gmsh_model):
     
     # Compute average velocity
     f2 = fem.form(uh*ufl.dx)
-    average_velocity = fem.assemble_scalar(f2)/area
-    #print(f'Mean velocity = {average_velocity}')
+    velocity_sum = mesh_comm.allreduce(fem.assemble_scalar(f2))
+    average_velocity = velocity_sum/area
+    '''
+    if mesh_comm.rank == 0:
+        print(f'Mean velocity = {average_velocity}', flush=True)
+    '''
 
     
     # Visualization with PyVista

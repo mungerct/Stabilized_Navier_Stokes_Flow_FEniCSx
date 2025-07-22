@@ -263,7 +263,7 @@ def define_navier_stokes_form(W, msh, Re, U_stokes=None, U_coarse=None):
         V, Q = W.sub(0).collapse()[0], W.sub(1).collapse()[0]
         w = interpolate_initial_guess(w, U_coarse, V, Q, msh)
     
-    return a, w, dF
+    return a, w, dF, V_NS
 
 def solve_navier_stokes(a, w, dF, bcs, W, snes_ksp_type, comm, rank):
     problem = NonlinearPDE_SNESProblem(a, w, bcs)
@@ -365,11 +365,46 @@ def make_output_folder(Re, img_fname, channel_mesh_size):
     return folder_name, img_name
 
 def solve_NS_flow():
+    """
+    Solves the incompressible Navier-Stokes flow in a domain derived from an input image.
+
+    This function performs the following steps:
+        1. Parses simulation parameters from user input or command line.
+        2. Generates inlet velocity profiles by solving the Stokes problem.
+        3. Solves a coarse Navier-Stokes problem using an intermediate mesh.
+        4. Refines the mesh and solves the full Navier-Stokes equations using the 
+           previously computed solution as an initial guess.
+        5. Extracts the velocity solution and corresponding spatial coordinates.
+
+    Returns:
+        msh (Mesh): Final mesh used for the full Navier-Stokes solution.
+        uh (Function): Placeholder velocity function (not fully used here), it is a Dolfinx function.
+        uvw_data (np.ndarray): Velocity vector at unique degrees of freedom.
+        xyz_data (np.ndarray): Corresponding spatial coordinates of the velocity vectors.
+
+    Notes:
+        - This function assumes MPI parallel execution and uses rank information
+          for process-specific logic (though not shown in detail here).
+        - The input image is used to generate the computational domain.
+        - The simulation is Reynolds number dependent and may involve nonlinear solves.
+        - This function is used with the "streamtrace.py" file into the file "INSERT NAME" to solve and streamtrace images in a batch file
+
+    Dependencies:
+        - Requires MPI (via mpi4py) and numerical solvers like PETSc/SNES.
+        - External helper functions: `parse_arguments`, `generate_inlet_profiles`, 
+          `generate_mesh`, `define_function_spaces`, `create_boundary_conditions`, 
+          `setup_stokes_weak_form`, `solve_stokes_problem`, 
+          `define_navier_stokes_form`, `solve_navier_stokes`.
+
+    Assumptions:
+        - The image file provided can be converted into a valid mesh.
+        - The mesh and function spaces are compatible with FEniCSx or similar framework.
+        - The function `snes_ksp_type` is defined or passed in the global scope.
+    """
     # Get Inputs
     comm = MPI.COMM_WORLD
     rank = comm.Get_rank()
     Re, img_fname, flowrate_ratio, channel_mesh_size = parse_arguments()
-    folder_name, img_name = make_output_folder(Re, img_fname, channel_mesh_size)
 
     # Solve Stokes Flow
     uh_1, msh_1, uh_2, msh_2 = generate_inlet_profiles(img_fname, flowrate_ratio)
@@ -380,17 +415,34 @@ def solve_NS_flow():
     U_stokes = solve_stokes_problem(a, L, bcs, W)
 
     # Solve Coarse Navier Stokes
-    a, w, dF = define_navier_stokes_form(W, msh, Re, U_stokes = U_stokes)
+    a, w, dF, V = define_navier_stokes_form(W, msh, Re, U_stokes = U_stokes)
     w_coarse, u, p = solve_navier_stokes(a, w, dF, bcs, W, snes_ksp_type, comm, rank)
 
     # Solve Navier Stokes With User Defined Mesh
     msh, ft = generate_mesh(img_fname, channel_mesh_size)
     V, Q = define_function_spaces(msh)
     W, bcs = create_boundary_conditions(msh, ft, V, Q, uh_1, uh_2)
-    a, w, dF = define_navier_stokes_form(W, msh, Re, U_coarse = w_coarse)
+    a, w, dF, V = define_navier_stokes_form(W, msh, Re, U_coarse = w_coarse)
     w, u, p = solve_navier_stokes(a, w, dF, bcs, W, snes_ksp_type, comm, rank)
 
-    return w, u, p, msh
+    uh = Function(V)
+    dof_coords = V.tabulate_dof_coordinates()[:,:3]
+    # Find number of components
+    element = V.ufl_element()
+    try:
+        n_comp = element.value_shape()[0]
+    except AttributeError:
+        # If it's a blocked element, assume each sub-element is scalar.
+        n_comp = len(element.sub_elements)
+
+    # Reshape function values based on the number of components.
+    values = u.x.array.reshape(-1, n_comp)
+
+    # Extract unique vertex coordinates.
+    xyz_data, unique_indices = np.unique(dof_coords, axis=0, return_index=True)
+    uvw_data = values[unique_indices]
+
+    return msh, uh, uvw_data, xyz_data
 
 def main():
     # Get Inputs
@@ -408,14 +460,14 @@ def main():
     U_stokes = solve_stokes_problem(a, L, bcs, W)
 
     # Solve Coarse Navier Stokes
-    a, w, dF = define_navier_stokes_form(W, msh, Re, U_stokes = U_stokes)
+    a, w, dF, V = define_navier_stokes_form(W, msh, Re, U_stokes = U_stokes)
     w_coarse, u, p = solve_navier_stokes(a, w, dF, bcs, W, snes_ksp_type, comm, rank)
 
     # Solve Navier Stokes With User Defined Mesh
     msh, ft = generate_mesh(img_fname, channel_mesh_size)
     V, Q = define_function_spaces(msh)
     W, bcs = create_boundary_conditions(msh, ft, V, Q, uh_1, uh_2)
-    a, w, dF = define_navier_stokes_form(W, msh, Re, U_coarse = w_coarse)
+    a, w, dF, V = define_navier_stokes_form(W, msh, Re, U_coarse = w_coarse)
     w, u, p = solve_navier_stokes(a, w, dF, bcs, W, snes_ksp_type, comm, rank)
 
     save_navier_stokes_solution(u, p, msh, folder_name, Re)

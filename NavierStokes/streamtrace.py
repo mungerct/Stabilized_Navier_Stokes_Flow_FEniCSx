@@ -45,6 +45,11 @@ from multiprocessing import Process, Queue
 from multiprocessing import Pool, cpu_count
 
 comm = MPI.COMM_WORLD
+global bb_tree
+global mesh
+global uh
+global uvw_data
+global xyz_data
 
 def pause():
     # Define pause function for debugging
@@ -163,7 +168,7 @@ def read_mesh_and_function(fname_base, function_name, function_dim):
     
     OUTPUTS
     mesh:           mesh from saved data
-    uh:             function from saved data
+    uh:             function from saved data (Dolfinx velocity function)
     data:           raw numpy array of saved data
     '''
     # Read in mesh file
@@ -560,17 +565,38 @@ def plot_rev_streamtrace(final_output, limits):
 
     return rev_streamtrace_fig
 
-def for_and_rev_streamtrace(num_seeds, limits):
-    global bb_tree
-    global mesh
-    global uh
-    global uvw_data
-    global xyz_data
+def for_and_rev_streamtrace(num_seeds, limits, img_fname, msh, uh, uvw_data, xyz_data):
+    """
+    Performs forward and reverse stream tracing based on an image-derived inlet contour and mesh data.
 
-    img_fname, solname, funcname, funcdim = parse_arguments()
+    Parameters:
+        num_seeds (int): Number of seeds in the x and y direction to use for reverse stream tracing.
+        limits (tuple): Plotting limits for visualization.
+        img_fname (str): Filename of the input image used to extract the inlet contour.
+        msh (Mesh): Finite element mesh of the domain.
+        uh (Function): Placeholder velocity function (not fully used here), it is a Dolfinx function.
+        uvw_data: Velocity field data (np array).
+        xyz_data: Spatial coordinate data (np array).
+
+    Workflow:
+        1. Extract the inlet contour from the image file.
+        2. Construct a bounding box tree from the mesh for spatial queries.
+        3. Generate an inner mesh representing the inlet region.
+        4. Plot and save visualizations of the inlet contour and its mesh.
+        5. Run forward stream tracing on the inner mesh to generate flow paths.
+        6. Calculate bounding box around the traced streamlines and create seed points for reverse tracing.
+        7. Run reverse stream tracing using the generated seeds.
+        8. Determine final streamline termination points from the reverse trace.
+        9. Plot and save results of the reverse stream trace.
+
+    Output:
+        Saves three figures:
+            - Inlet contour plot
+            - Inlet mesh plot
+            - Reverse streamtrace plot
+    """
     contour = update_contour(img_fname)
 
-    mesh, uh, uvw_data, xyz_data = read_mesh_and_function(solname, funcname, funcdim)
     bb_tree = geometry.bb_tree(mesh, mesh.topology.dim)
     inner_mesh = inner_contour_mesh_func(img_fname)
 
@@ -587,12 +613,6 @@ def for_and_rev_streamtrace(num_seeds, limits):
     save_figs(img_fname, inner_contour_fig, inner_contour_mesh_fig, seeds, final_output, rev_streamtrace_fig, num_seeds)
 
 def main():
-    global bb_tree
-    global mesh
-    global uh
-    global uvw_data
-    global xyz_data
-
     limits = 0.5
     num_seeds = 50
 

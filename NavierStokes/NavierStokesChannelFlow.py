@@ -364,6 +364,34 @@ def make_output_folder(Re, img_fname, channel_mesh_size):
 
     return folder_name, img_name
 
+def solve_NS_flow():
+    # Get Inputs
+    comm = MPI.COMM_WORLD
+    rank = comm.Get_rank()
+    Re, img_fname, flowrate_ratio, channel_mesh_size = parse_arguments()
+    folder_name, img_name = make_output_folder(Re, img_fname, channel_mesh_size)
+
+    # Solve Stokes Flow
+    uh_1, msh_1, uh_2, msh_2 = generate_inlet_profiles(img_fname, flowrate_ratio)
+    msh, ft = generate_mesh(img_fname, 0.1)
+    V, Q = define_function_spaces(msh)
+    W, bcs = create_boundary_conditions(msh, ft, V, Q, uh_1, uh_2)
+    a, L, V = setup_stokes_weak_form(W, msh)
+    U_stokes = solve_stokes_problem(a, L, bcs, W)
+
+    # Solve Coarse Navier Stokes
+    a, w, dF = define_navier_stokes_form(W, msh, Re, U_stokes = U_stokes)
+    w_coarse, u, p = solve_navier_stokes(a, w, dF, bcs, W, snes_ksp_type, comm, rank)
+
+    # Solve Navier Stokes With User Defined Mesh
+    msh, ft = generate_mesh(img_fname, channel_mesh_size)
+    V, Q = define_function_spaces(msh)
+    W, bcs = create_boundary_conditions(msh, ft, V, Q, uh_1, uh_2)
+    a, w, dF = define_navier_stokes_form(W, msh, Re, U_coarse = w_coarse)
+    w, u, p = solve_navier_stokes(a, w, dF, bcs, W, snes_ksp_type, comm, rank)
+
+    return w, u, p, msh
+
 def main():
     # Get Inputs
     comm = MPI.COMM_WORLD

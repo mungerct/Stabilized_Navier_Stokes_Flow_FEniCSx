@@ -350,6 +350,19 @@ def write_run_metadata(FolderName, Re, img_fname, flowrate_ratio, channel_mesh_s
 
 
 def make_output_folder(Re, img_fname, channel_mesh_size):
+    """
+    Create and set up an output folder for storing simulation results.
+
+    Parameters:
+        Re (int): Reynolds number used in the simulation.
+        img_fname (str): Full path to the input image file (should end with '.png').
+        channel_mesh_size (float): Mesh size for the channel flow simulation (1 is defined as the width of the channel)
+
+    Returns:
+        tuple:
+            folder_name (str): Name of the created output directory.
+            img_name (str): Processed image filename used in the folder name.
+    """
     # Create output folder
     img_name = img_fname.removesuffix(".png")
     img_name = img_name.removeprefix(os.getcwd())
@@ -381,6 +394,9 @@ def solve_NS_flow():
         uh (Function): Placeholder velocity function (not fully used here), it is a Dolfinx function.
         uvw_data (np.ndarray): Velocity vector at unique degrees of freedom.
         xyz_data (np.ndarray): Corresponding spatial coordinates of the velocity vectors.
+        Re (int): Reynolds number in the simulation
+        img_fname (str): Full path to the input image file (should end with '.png').
+        channel_mesh_size (float): Mesh size for the channel flow simulation (1 is defined as the width of the channel)
 
     Notes:
         - This function assumes MPI parallel execution and uses rank information
@@ -442,7 +458,7 @@ def solve_NS_flow():
     xyz_data, unique_indices = np.unique(dof_coords, axis=0, return_index=True)
     uvw_data = values[unique_indices]
 
-    return msh, uh, uvw_data, xyz_data
+    return msh, uh, uvw_data, xyz_data, Re, img_fname, channel_mesh_size, V, Q, flowrate_ratio, u, p
 
 def main():
     # Get Inputs

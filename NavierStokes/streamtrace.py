@@ -1,5 +1,4 @@
-#!/usr/bin/env python 
-# image 2 
+#!/usr/bin/env python
 import time
 import dolfinx.fem.function
 import numpy as np
@@ -610,7 +609,8 @@ def for_and_rev_streamtrace(num_seeds, limits, img_fname, msh, uh, uvw_data, xyz
     final_output = find_seed_end(rev_pointsy, rev_pointsz, seeds, contour)
 
     rev_streamtrace_fig = plot_rev_streamtrace(final_output, limits)
-    save_figs(img_fname, inner_contour_fig, inner_contour_mesh_fig, seeds, final_output, rev_streamtrace_fig, num_seeds)
+
+    return rev_streamtrace_fig, inner_contour_fig, inner_contour_mesh_fig
 
 def main():
     limits = 0.5

@@ -3,9 +3,18 @@
 import numpy as np
 import sys
 import os
+from mpi4py import MPI
 
 from streamtrace import for_and_rev_streamtrace
 from NavierStokesChannelFlow import solve_NS_flow, make_output_folder, write_run_metadata, save_navier_stokes_solution
+from dolfinx import geometry
+
+comm = MPI.COMM_WORLD
+global bb_tree
+global mesh
+global uh
+global uvw_data
+global xyz_data
 
 def save_figs(img_fname, inner_contour_fig, inner_contour_mesh_fig, seeds, final_output, rev_streamtrace_fig, num_seeds):
     print('Saving Figures')
@@ -21,6 +30,11 @@ def save_figs(img_fname, inner_contour_fig, inner_contour_mesh_fig, seeds, final
     np.savetxt("final_output.csv", final_output, delimiter=",")
 
 def main():
+    global bb_tree
+    global msh
+    global uh
+    global uvw_data
+    global xyz_data
     num_seeds = 50
     limits = 0.5
     print(os.getcwd())
@@ -29,7 +43,9 @@ def main():
     write_run_metadata(Folder_name, Re, img_fname, flow_ratio, channel_mesh_size, V, Q, img_name)
     save_navier_stokes_solution(u, p, msh, Folder_name, Re)
     print(os.getcwd())
-    rev_streamtrace_fig, inner_contour_fig, inner_contour_mesh_fig = for_and_rev_streamtrace(num_seeds, limits, img_fname, msh, uh, uvw_data, xyz_data)
+    bb_tree = geometry.bb_tree(msh, msh.topology.dim)
+    rev_streamtrace_fig, inner_contour_fig, inner_contour_mesh_fig, seeds, final_output = for_and_rev_streamtrace(num_seeds, limits, img_fname, msh, u, uvw_data, xyz_data, msh)
+    save_figs(img_fname, inner_contour_fig, inner_contour_mesh_fig, seeds, final_output, rev_streamtrace_fig, num_seeds)
 
 if __name__ == "__main__":
     main()

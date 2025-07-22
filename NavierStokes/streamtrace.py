@@ -42,6 +42,9 @@ import alphashape
 from descartes import PolygonPatch
 from multiprocessing import Process, Queue
 from multiprocessing import Pool, cpu_count
+from functools import partial
+from multiprocessing.dummy import Pool as ThreadPool
+from multiprocessing import cpu_count
 
 comm = MPI.COMM_WORLD
 global bb_tree
@@ -240,7 +243,7 @@ def update_contour(img_fname):
     new_arr = np.hstack((zeros_col, contour))
     return new_arr
 
-def velfunc(t, x):
+def velfunc(t, x, bb_tree, mesh, uh):
     # This is the velocity function, it finds the velocity at a given point in the domain
     cell_candidate = geometry.compute_collisions_points(bb_tree, x) # Choose one of the cells that contains the point
     colliding_cell = geometry.compute_colliding_cells(mesh, cell_candidate, x) # Choose one of the cells that contains the point
@@ -255,7 +258,7 @@ def velfunc(t, x):
         # print(f'P:{x}, V:{vel}', flush = True)
         return vel
 
-def velfunc_reverese(t, x):
+def velfunc_reverese(t, x, bb_tree, mesh, uh):
     # This is the velocity function, it finds the velocity at a given point in the domain
     cell_candidate = geometry.compute_collisions_points(bb_tree, x) # Choose one of the cells that contains the point
     colliding_cell = geometry.compute_colliding_cells(mesh, cell_candidate, x) # Choose one of the cells that contains the point
@@ -271,17 +274,17 @@ def velfunc_reverese(t, x):
         # print(f'P:{x}, V:{vel}', flush = True)
         return vel
 
-def velocity_magnitude_event(t, y):
+def velocity_magnitude_event(t, y, bb_tree, mesh, uh):
     # Event flag for the "solve_ivp" function from Scipy, triggers if the particle stops moving
-    speed = np.linalg.norm(velfunc(t, y))
+    speed = np.linalg.norm(velfunc(t, y, bb_tree, mesh, uh))
     return speed - 1e-6  # triggers when speed is 1e-6
 
-def position_event(t, y):
+def position_event(t, y, bb_tree, mesh, uh):
     # Event flag for the "solve_ivp" function from Scipy, triggers when the particle is at x = 3.7 (the total domain is length = 4)
     pos_x = y[0]
     return pos_x - 3.7 # triggers when x is at 3
 
-def reverse_position_event(t, y):
+def reverse_position_event(t, y, bb_tree, mesh, uh):
     # Event flag for the "solve_ivp" function from Scipy, triggers when the particle is at x = 3.7 (the total domain is length = 4)
     pos_x = y[0]
     return pos_x - 0.06 # triggers when x is at 0.06
@@ -292,7 +295,7 @@ def inner_contour_mesh_func(img_fname):
     inner_mesh = inner_mesh.geometry.x
     return inner_mesh
 
-def streamtrace_pool(row):
+def streamtrace_pool(row, bb_tree, mesh, uh):
     t_span = (0, 20)
     velocity_magnitude_event.terminal = True  # stops integration when event is triggered
     velocity_magnitude_event.direction = -1   # only when crossing threshold from above
@@ -300,7 +303,7 @@ def streamtrace_pool(row):
     position_event.direction = 1
     events_list = (velocity_magnitude_event, position_event)
 
-    sol = solve_ivp(velfunc, t_span, row, method='RK45', events=events_list, max_step=0.125)
+    sol = solve_ivp(velfunc, t_span, row, method='RK45', events=events_list, max_step=0.125, args=(bb_tree, mesh, uh))
 
     x_vals = np.array(sol.y[0])
     y_vals = np.array(sol.y[1])
@@ -310,17 +313,23 @@ def streamtrace_pool(row):
         return (
             [x_vals[-1]],
             [y_vals[-1]],
-            [z_vals[-1]]
+            [z_vals[-1]],
         )
     else:
         return None
 
-def run_streamtrace(inner_mesh):
+def run_streamtrace(inner_mesh, bb_tree, mesh, uh):
     start_time = time.time()
     print('Streamtracing', flush=True)
 
-    with Pool(processes = cpu_count()) as pool:
-        results = pool.map(streamtrace_pool, [inner_mesh[i, :] for i in range(inner_mesh.shape[0])])
+    wrapped_streamtrace = partial(streamtrace_pool, bb_tree=bb_tree, mesh=mesh, uh=uh)
+    
+    with ThreadPool(processes=cpu_count()) as pool:
+        results = pool.map(wrapped_streamtrace, [inner_mesh[i, :] for i in range(inner_mesh.shape[0])])
+
+    # print("Sample results:")
+    # for i, res in enumerate(results):
+        # print(f"[{i}] type={type(res)}, value={res}")
 
     # Filter out None results
     results = [res for res in results if res is not None]
@@ -346,7 +355,7 @@ def plot_streamtrace(pointsy, pointsz, contour, limits):
     points = np.vstack((pointsy, pointsz))
     points = points.T
 
-    alpha_shape = alphashape.alphashape(points, 30)
+    alpha_shape = alphashape.alphashape(points, 0.2)
     # Initialize plot
     fig, ax = plt.subplots()
     x = np.array(list(alpha_shape.exterior.coords)).T[0]
@@ -381,9 +390,10 @@ def expand_streamtace(pointsy, pointsz, contour):
     pointsz = np.squeeze(pointsz)
 
     points = np.vstack((pointsy, pointsz))
+    print(points)
     points = points.T
 
-    alpha_shape = alphashape.alphashape(points, 30)
+    alpha_shape = alphashape.alphashape(points, 0.2)
     x = np.array(list(alpha_shape.exterior.coords)).T[0]
     y = np.array(list(alpha_shape.exterior.coords)).T[1]
     blurr = 0.2
@@ -425,7 +435,7 @@ def make_rev_streamtrace_seeds(minx, maxx, miny, maxy, numpoints):
 
     return new_arr # Array of new seeds for reverse stream trace
 
-def reverse_streamtrace_pool(row):
+def reverse_streamtrace_pool(row, bb_tree, mesh, uh):
     t_span = (0, 20)
     velocity_magnitude_event.terminal = True
     velocity_magnitude_event.direction = -1
@@ -433,7 +443,7 @@ def reverse_streamtrace_pool(row):
     reverse_position_event.direction = -1
     events_list = (reverse_position_event,)
 
-    sol = solve_ivp(velfunc_reverese, t_span, row, method='RK45', events=events_list, max_step=0.125)
+    sol = solve_ivp(velfunc_reverese, t_span, row, method='RK45', events=events_list, max_step=0.125, args=(bb_tree, mesh, uh))
 
     x_vals = np.array(sol.y[0])
     y_vals = np.array(sol.y[1])
@@ -448,12 +458,14 @@ def reverse_streamtrace_pool(row):
     else:
         return None
 
-def run_reverse_streamtrace(inner_mesh):
+def run_reverse_streamtrace(inner_mesh, bb_tree, mesh, uh):
     start_time = time.time()
     print('Reverse Streamtracing', flush=True)
 
-    with Pool(processes = cpu_count()) as pool:
-        results = pool.map(reverse_streamtrace_pool, [inner_mesh[i, :] for i in range(inner_mesh.shape[0])])
+    wrapped_rev_streamtrace = partial(reverse_streamtrace_pool, bb_tree=bb_tree, mesh=mesh, uh=uh)
+    
+    with ThreadPool(processes=cpu_count()) as pool:
+        results = pool.map(wrapped_rev_streamtrace, [inner_mesh[i, :] for i in range(inner_mesh.shape[0])])
 
     # Filter out None results
     results = [res for res in results if res is not None]
@@ -474,7 +486,7 @@ def run_reverse_streamtrace(inner_mesh):
     
 def find_seed_end(rev_pointsy, rev_pointsz, seeds, contour):
     contour = contour[:, 1:3]
-    contour[:,[1,0]] = contour[:,[0,1]]
+    # contour[:,[1,0]] = contour[:,[0,1]]
     valid_seeds = []
 
     for i in range(seeds.shape[0]):
@@ -564,7 +576,7 @@ def plot_rev_streamtrace(final_output, limits):
 
     return rev_streamtrace_fig
 
-def for_and_rev_streamtrace(num_seeds, limits, img_fname, msh, uh, uvw_data, xyz_data):
+def for_and_rev_streamtrace(num_seeds, limits, img_fname, msh, uh, uvw_data, xyz_data, mesh):
     """
     Performs forward and reverse stream tracing based on an image-derived inlet contour and mesh data.
 
@@ -573,7 +585,7 @@ def for_and_rev_streamtrace(num_seeds, limits, img_fname, msh, uh, uvw_data, xyz
         limits (tuple): Plotting limits for visualization.
         img_fname (str): Filename of the input image used to extract the inlet contour.
         msh (Mesh): Finite element mesh of the domain.
-        uh (Function): Placeholder velocity function (not fully used here), it is a Dolfinx function.
+        uh (Function): Velocity function, it is a Dolfinx function containing (x,y,z) velocity information
         uvw_data: Velocity field data (np array).
         xyz_data: Spatial coordinate data (np array).
 
@@ -596,21 +608,21 @@ def for_and_rev_streamtrace(num_seeds, limits, img_fname, msh, uh, uvw_data, xyz
     """
     contour = update_contour(img_fname)
 
-    bb_tree = geometry.bb_tree(mesh, mesh.topology.dim)
+    bb_tree = geometry.bb_tree(msh, msh.topology.dim)
     inner_mesh = inner_contour_mesh_func(img_fname)
 
     inner_contour_fig, inner_contour_mesh_fig = plot_inlet(contour, inner_mesh, limits)
 
-    pointsx, pointsy, pointsz = run_streamtrace(inner_mesh)
+    pointsx, pointsy, pointsz = run_streamtrace(inner_mesh, bb_tree, mesh, uh)
     minx, maxx, miny, maxy = expand_streamtace(pointsy, pointsz, contour)
     seeds = make_rev_streamtrace_seeds(minx, maxx, miny, maxy, num_seeds)
 
-    rev_pointsx, rev_pointsy, rev_pointsz = run_reverse_streamtrace(seeds)
+    rev_pointsx, rev_pointsy, rev_pointsz = run_reverse_streamtrace(seeds, bb_tree, mesh, uh)
     final_output = find_seed_end(rev_pointsy, rev_pointsz, seeds, contour)
 
     rev_streamtrace_fig = plot_rev_streamtrace(final_output, limits)
 
-    return rev_streamtrace_fig, inner_contour_fig, inner_contour_mesh_fig
+    return rev_streamtrace_fig, inner_contour_fig, inner_contour_mesh_fig, seeds, final_output
 
 def main():
     limits = 0.5
@@ -625,12 +637,12 @@ def main():
 
     inner_contour_fig, inner_contour_mesh_fig = plot_inlet(contour, inner_mesh, limits)
 
-    pointsx, pointsy, pointsz = run_streamtrace(inner_mesh)
+    pointsx, pointsy, pointsz = run_streamtrace(inner_mesh, bb_tree, mesh, uh)
     # plot_streamtrace(pointsy, pointsz, contour, limits)
     minx, maxx, miny, maxy = expand_streamtace(pointsy, pointsz, contour)
     seeds = make_rev_streamtrace_seeds(minx, maxx, miny, maxy, num_seeds)
 
-    rev_pointsx, rev_pointsy, rev_pointsz = run_reverse_streamtrace(seeds)
+    rev_pointsx, rev_pointsy, rev_pointsz = run_reverse_streamtrace(seeds, bb_tree, mesh, uh)
     final_output = find_seed_end(rev_pointsy, rev_pointsz, seeds, contour)
 
     # plot_streamtrace(rev_pointsy, rev_pointsz, contour, limits)

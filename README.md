@@ -8,16 +8,10 @@ of a fluid at an outlet (assuming no mixing) for low Reynolds number exetrusion 
 
 <details>
 <summary>Overview</summary>
-  The solver uses stabilized stokes flow to solve for the outlet profile. To run the "StokesChannelFlow.py" file, you must also download the the "image2gmsh3D.py" and 
-  "image2inlet.py" files. You will also need a black and white .png file of the inlet shape (see "Plus.png" as an example). The second required input is the flowrate ratio 
-  between the inner and outer flow profiles. A flowrate ratio of 1 means all of the flow will come from the inner countour, while 0 means all of the flow is in the outer contour.
+  The solver uses stabilized Navier-Stokes flow to solve for the outlet profile. You will also need a black and white .png file of the inlet shape (see "Plus.png" as an example). The second required input is the flowrate ratio between the inner and outer flow profiles. A flowrate ratio of 1 means all of the flow will come from the inner countour, while 0 means all of the flow is in the outer contour.
 
+  There is a third optional parameter which is the length of the mesh elements (the small the number, the more elements). It is recommend to start with a mesh length input of 0.05 (the width of the channel us non-dimensioanlized to be 1) and gradually decrease from there to a suitable resolution.
 
-  There is a third optional parameter which is the length of the mesh elements (the small the number, the more elements). It is recommend to start with a mesh length input of 0.1
-  and gradually decrease from there to a suitable resolution. Please know that there is a currently a bug where as the mesh gets smaller, a presssure singularity will form and the
-  pressure at the inlet will go towards infinity, this is why starting with a mesh length of 0.1 is recommended.
-
-  
   The examples generated below used a flowrate ratio 0.5
 </details>
 

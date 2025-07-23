@@ -37,7 +37,7 @@ import matplotlib.pyplot as plt
 from scipy.integrate import RK45
 from dolfinx import geometry
 from scipy.integrate import solve_ivp
-from image2inlet import solve_inlet_profiles
+from image2inlet import solve_inlet_profiles, optimize_contour, get_contours, load_image
 import alphashape
 from descartes import PolygonPatch
 from multiprocessing import Process, Queue
@@ -57,6 +57,7 @@ def pause():
     # Define pause function for debugging
     programPause = input("Press the <ENTER> key to continue...")
 
+'''
 def load_image(img_fname):
     # Function to load in an image and convert to greyscale
     #print('Loading image {}'.format(img_fname), flush = True)
@@ -156,9 +157,10 @@ def optimize_contour(contour):
     
     # Set characteristic lengths, epsilon cutoff
     lc = min((max_x - min_x), (max_y - min_y))
-    mesh_lc = 0.01 * lc    
+    mesh_lc = 0.05 * lc    
 
     return [contour, mesh_lc]
+'''
 
 def read_mesh_and_function(fname_base, function_name, function_dim):
     print('Reading solution from file', flush = True)
@@ -240,6 +242,9 @@ def update_contour(img_fname):
     img_contours = get_contours(gray_img)
     contour, mesh_lc = optimize_contour(img_contours[1])
     zeros_col = np.zeros((contour.shape[0], 1))
+    print(contour)
+    contour[:, [0,1]] = contour[:, [1,0]]
+    print(contour)
     new_arr = np.hstack((zeros_col, contour))
     return new_arr
 
@@ -282,12 +287,12 @@ def velocity_magnitude_event(t, y, bb_tree, mesh, uh):
 def position_event(t, y, bb_tree, mesh, uh):
     # Event flag for the "solve_ivp" function from Scipy, triggers when the particle is at x = 3.7 (the total domain is length = 4)
     pos_x = y[0]
-    return pos_x - 3.7 # triggers when x is at 3
+    return pos_x - 3.7 # triggers when x is at 3.7
 
 def reverse_position_event(t, y, bb_tree, mesh, uh):
     # Event flag for the "solve_ivp" function from Scipy, triggers when the particle is at x = 3.7 (the total domain is length = 4)
     pos_x = y[0]
-    return pos_x - 0.06 # triggers when x is at 0.06
+    return pos_x - 0.13 # triggers when x is at 0.06
 
 def inner_contour_mesh_func(img_fname):
     # Make a mesh of the inner countor and used those points to streamtrace
@@ -390,7 +395,6 @@ def expand_streamtace(pointsy, pointsz, contour):
     pointsz = np.squeeze(pointsz)
 
     points = np.vstack((pointsy, pointsz))
-    print(points)
     points = points.T
 
     alpha_shape = alphashape.alphashape(points, 0.2)
@@ -441,7 +445,7 @@ def reverse_streamtrace_pool(row, bb_tree, mesh, uh):
     velocity_magnitude_event.direction = -1
     reverse_position_event.terminal = True
     reverse_position_event.direction = -1
-    events_list = (reverse_position_event,)
+    events_list = (reverse_position_event, velocity_magnitude_event)
 
     sol = solve_ivp(velfunc_reverese, t_span, row, method='RK45', events=events_list, max_step=0.125, args=(bb_tree, mesh, uh))
 
@@ -449,7 +453,7 @@ def reverse_streamtrace_pool(row, bb_tree, mesh, uh):
     y_vals = np.array(sol.y[1])
     z_vals = np.array(sol.y[2])
 
-    if x_vals[-1] < 2:
+    if x_vals[-1] < 0.5:
         return (
             [x_vals[-1]],
             [y_vals[-1]],
@@ -458,14 +462,13 @@ def reverse_streamtrace_pool(row, bb_tree, mesh, uh):
     else:
         return None
 
-def run_reverse_streamtrace(inner_mesh, bb_tree, mesh, uh):
+def run_reverse_streamtrace(seeds, bb_tree, mesh, uh):
     start_time = time.time()
     print('Reverse Streamtracing', flush=True)
 
     wrapped_rev_streamtrace = partial(reverse_streamtrace_pool, bb_tree=bb_tree, mesh=mesh, uh=uh)
-    
     with ThreadPool(processes=cpu_count()) as pool:
-        results = pool.map(wrapped_rev_streamtrace, [inner_mesh[i, :] for i in range(inner_mesh.shape[0])])
+        results = pool.map(wrapped_rev_streamtrace, [seeds[i, :] for i in range(seeds.shape[0])])
 
     # Filter out None results
     results = [res for res in results if res is not None]
@@ -482,14 +485,15 @@ def run_reverse_streamtrace(inner_mesh, bb_tree, mesh, uh):
 
     elapsed_time = time.time() - start_time
     print(f"Elapsed time: {elapsed_time:.4f} seconds", flush = True)
+    print(pointsx.shape)
     return pointsx, pointsy, pointsz
-    
+
 def find_seed_end(rev_pointsy, rev_pointsz, seeds, contour):
     contour = contour[:, 1:3]
-    # contour[:,[1,0]] = contour[:,[0,1]]
+    contour[:,[1,0]] = contour[:,[0,1]]
     valid_seeds = []
 
-    for i in range(seeds.shape[0]):
+    for i in range(rev_pointsy.shape[0]):
         point = np.array([rev_pointsy[i], rev_pointsz[i]])
         point = point.reshape(1, 2)
         is_inside = sk.measure.points_in_poly(point, contour)

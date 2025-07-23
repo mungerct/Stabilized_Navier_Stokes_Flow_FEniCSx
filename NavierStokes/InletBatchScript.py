@@ -35,8 +35,8 @@ def main():
     global uh
     global uvw_data
     global xyz_data
-    num_seeds = 50
-    limits = 0.5
+    num_seeds = 25
+    limits = 1
     print(os.getcwd())
     msh, uh, uvw_data, xyz_data, Re, img_fname, channel_mesh_size, V, Q, flow_ratio, u, p = solve_NS_flow()
     Folder_name, img_name = make_output_folder(Re, img_fname, channel_mesh_size)

@@ -375,6 +375,7 @@ def plot_streamtrace(pointsy, pointsz, contour, limits):
     ax.set_yticks([])
     ax.set_xticklabels([])
     ax.set_yticklabels([])
+    ax.set_title('Alpha Shape')
     plt.show()
 
     plt.scatter(pointsy, pointsz, marker = 'o') # Make stream trace outlet profile
@@ -385,6 +386,7 @@ def plot_streamtrace(pointsy, pointsz, contour, limits):
     ax.set_yticks([])
     ax.set_xticklabels([])
     ax.set_yticklabels([])
+    ax.set_title('Scatter Plot')
     plt.show()
 
     return(plt)
@@ -460,7 +462,11 @@ def reverse_streamtrace_pool(row, bb_tree, mesh, uh):
             [z_vals[-1]]
         )
     else:
-        return None
+        return (
+            [10],
+            [10],
+            [10]
+        )
 
 def run_reverse_streamtrace(seeds, bb_tree, mesh, uh):
     start_time = time.time()
@@ -485,15 +491,14 @@ def run_reverse_streamtrace(seeds, bb_tree, mesh, uh):
 
     elapsed_time = time.time() - start_time
     print(f"Elapsed time: {elapsed_time:.4f} seconds", flush = True)
-    print(pointsx.shape)
     return pointsx, pointsy, pointsz
 
 def find_seed_end(rev_pointsy, rev_pointsz, seeds, contour):
     contour = contour[:, 1:3]
-    contour[:,[1,0]] = contour[:,[0,1]]
+    # contour[:,[1,0]] = contour[:,[0,1]]
     valid_seeds = []
 
-    for i in range(rev_pointsy.shape[0]):
+    for i in range(seeds.shape[0]):
         point = np.array([rev_pointsy[i], rev_pointsz[i]])
         point = point.reshape(1, 2)
         is_inside = sk.measure.points_in_poly(point, contour)
@@ -618,6 +623,7 @@ def for_and_rev_streamtrace(num_seeds, limits, img_fname, msh, uh, uvw_data, xyz
     inner_contour_fig, inner_contour_mesh_fig = plot_inlet(contour, inner_mesh, limits)
 
     pointsx, pointsy, pointsz = run_streamtrace(inner_mesh, bb_tree, mesh, uh)
+    # plot_streamtrace(pointsy, pointsz, contour, limits)
     minx, maxx, miny, maxy = expand_streamtace(pointsy, pointsz, contour)
     seeds = make_rev_streamtrace_seeds(minx, maxx, miny, maxy, num_seeds)
 

@@ -476,7 +476,7 @@ def main():
     U_stokes = solve_stokes_problem(a, L, bcs, W)
 
     # Solve Coarse Navier Stokes
-    a, w, dF, V = define_navier_stokes_form(W, msh, Re, U_stokes = U_stokes)
+    a, w, dF, V = define_navier_stokes_form(W, msh, 1, U_stokes = U_stokes)
     w_coarse, u, p = solve_navier_stokes(a, w, dF, bcs, W, snes_ksp_type, comm, rank)
 
     # Solve Navier Stokes With User Defined Mesh

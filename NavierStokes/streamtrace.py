@@ -57,111 +57,6 @@ def pause():
     # Define pause function for debugging
     programPause = input("Press the <ENTER> key to continue...")
 
-'''
-def load_image(img_fname):
-    # Function to load in an image and convert to greyscale
-    #print('Loading image {}'.format(img_fname), flush = True)
-    img = sk.io.imread(img_fname)
-    # plt.imshow(img)
-    # plt.show()
-
-    # print(img.shape, flush = True)
-    if (len(img.shape) == 2):
-        gray_img = img
-    else:
-        if (img.shape[2] == 3):
-            gray_img = sk.color.rgb2gray(img)
-        if (img.shape[2] == 4):
-            rgb_img = sk.color.rgba2rgb(img)
-            gray_img = sk.color.rgb2gray(rgb_img)
-
-    return gray_img
-
-def get_contours(gray_img):
-    # Function to look at the grewscale image and find the contours
-    height, width = gray_img.shape    
-    # Normalize and flip (for some reason)
-    raw_contours = sk.measure.find_contours(gray_img, 0.5) # Start with this, NOT the optimized contours
- 
-    #print('Found {} contours'.format(len(raw_contours)), flush = True)
-
-    contours = []
-    for n, contour in enumerate(raw_contours):
-        # Create an empty image to store the masked array
-        r_mask = np.zeros_like(gray_img, dtype = int)  # original np.int
-        # Create a contour image by using the contour coordinates rounded to their nearest integer value
-        r_mask[np.round(contour[:, 0]).astype('int'), np.round(contour[:, 1]).astype('int')] = 1
-        # Fill in the hole created by the contour boundary
-        r_mask = ndimage.binary_fill_holes(r_mask)
-
-        contour_area = float(np.count_nonzero(r_mask))/(float(height * width))
-        #print(np.count_nonzero(r_mask), flush = True)
-        if (contour_area >= 0.05):
-            contours.append(contour)
-
-    #print('Reduced to {} contours'.format(len(contours)), flush = True)
-
-    for n, contour in enumerate(contours):
-        contour[:,1] -= 0.5 * height
-        contour[:,1] /= height
-
-        contour[:,0] -= 0.5 * width
-        contour[:,0] /= width
-        contour[:,0] *= -1.0
-
-    # print("{:d} Contours detected".format(len(contours)), flush = True)
-
-    return contours
-
-def optimize_contour(contour):
-    # Optimize the number of points in the contor, helps space out the points evenly
-    #print("Optimizing contour.", flush = True)
-    dir_flag = 0
-    dir_bank = []
-
-    contour_keep = []
-
-    ## Use low-pass fft to smooth out 
-    x = contour[:,1]
-    y = contour[:,0]
-
-    signal = x + 1j*y
-    #print(signal, flush = True)
-
-    fft = np.fft.fft(signal)
-    freq = np.fft.fftfreq(signal.shape[-1])
-    cutoff = 0.12
-    fft[np.abs(freq) > cutoff] = 0 
-
-    signal_filt = np.fft.ifft(fft)
-
-    contour[:,1] = signal_filt.real
-    contour[:,0] = signal_filt.imag
-
-    #contour = rdp(contour)
-    contour = rdp(contour, epsilon=0.0005)
-
-    # Remove final point in RDP, which coincides with
-    # the first point
-    contour = np.delete(contour, len(contour)-1, 0)
-
-    # cutoff of 0.15, eps of 0.005 works for inner flow
-
-    #contour = reverse_opt_pass(contour)
-    # Figure out a reasonable radius
-    max_x = max(contour[:,1])
-    min_x = min(contour[:,1])
-    
-    max_y = max(contour[:,0])
-    min_y = min(contour[:,0])
-    
-    # Set characteristic lengths, epsilon cutoff
-    lc = min((max_x - min_x), (max_y - min_y))
-    mesh_lc = 0.05 * lc    
-
-    return [contour, mesh_lc]
-'''
-
 def read_mesh_and_function(fname_base, function_name, function_dim):
     print('Reading solution from file', flush = True)
     '''
@@ -242,9 +137,7 @@ def update_contour(img_fname):
     img_contours = get_contours(gray_img)
     contour, mesh_lc = optimize_contour(img_contours[1])
     zeros_col = np.zeros((contour.shape[0], 1))
-    print(contour)
     contour[:, [0,1]] = contour[:, [1,0]]
-    print(contour)
     new_arr = np.hstack((zeros_col, contour))
     return new_arr
 

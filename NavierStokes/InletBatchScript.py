@@ -30,7 +30,7 @@ def save_figs(img_fname, inner_contour_fig, inner_contour_mesh_fig, seeds, final
     np.savetxt("final_output.csv", final_output, delimiter=",")
 
 def run_trace_save():
-    num_seeds = 400
+    num_seeds = 100
     limits = 1
     msh, uh, uvw_data, xyz_data, Re, img_fname, channel_mesh_size, V, Q, flow_ratio, u, p = solve_NS_flow()
     Folder_name, img_name = make_output_folder(Re, img_fname, channel_mesh_size)

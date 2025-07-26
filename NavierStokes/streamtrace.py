@@ -45,6 +45,7 @@ from multiprocessing import Pool, cpu_count
 from functools import partial
 from multiprocessing.dummy import Pool as ThreadPool
 from multiprocessing import cpu_count
+from tqdm import tqdm
 
 comm = MPI.COMM_WORLD
 rank = comm.Get_rank()
@@ -388,77 +389,61 @@ def run_reverse_streamtrace(seeds, mesh, uh):
 
     if rank == 0:
         print(f"[Rank {rank}] Building bb_tree locally", flush=True)
+        start_time = time.time()
+        print("Reverse Streamtracing with MPI (round-robin static scheduling, rank 0 = controller only)", flush=True)
+
+    # All ranks build bb_tree independently
     bb_tree = geometry.bb_tree(mesh, mesh.topology.dim)
 
-    # Step 1: Broadcast shared data
-    if rank == 0:
-        print('Reverse Streamtracing with MPI', flush=True)
-        start_time = time.time()
-
-    # Step 2: Split seeds across ranks
+    # Step 1: Broadcast total number of seeds
     num_seeds = seeds.shape[0] if rank == 0 else None
     num_seeds = comm.bcast(num_seeds, root=0)
 
-    # Scatter seeds
-    counts = [num_seeds // size + (1 if i < num_seeds % size else 0) for i in range(size)]
-    displs = np.cumsum([0] + counts[:-1])
-    local_count = counts[rank]
-
-    local_seeds = np.empty((local_count, seeds.shape[1]), dtype=seeds.dtype)
-    comm.Scatterv(
-        [seeds, tuple(np.array(counts) * seeds.shape[1]), tuple(displs * seeds.shape[1]), MPI.DOUBLE],
-        local_seeds,
-        root=0
-    )
-
-    # Step 3: Each rank computes local results
-    local_results = []
-    for seed in local_seeds:
-        res = reverse_streamtrace_pool(seed, bb_tree=bb_tree, mesh=mesh, uh=uh)
-        local_results.append(res if res is not None else (np.nan, np.nan, np.nan))
-
-    # Step 4: Gather all results back to root
-    local_results_np = np.array(local_results, dtype=np.float64)  # shape: (local_count, 3)
-    recvbuf = None
     if rank == 0:
-        recvbuf = np.empty((num_seeds, 3), dtype=np.float64)
+        # Assign seeds round-robin to ranks 1..(size-1)
+        worker_ranks = list(range(1, size))
+        assigned = [[] for _ in range(size)]  # assigned[rank] = list of (index, seed)
 
-    comm.Gatherv(
-        local_results_np,
-        [recvbuf, (np.array(counts) * 3, displs * 3), MPI.DOUBLE],
-        root=0
-    )
+        for i, seed in enumerate(seeds):
+            worker = worker_ranks[i % len(worker_ranks)]
+            assigned[worker].append((i, seed))
 
-    # Step 5: Finalize results on root
-    if rank == 0:
-        pointsx = recvbuf[:, 0]
-        pointsy = recvbuf[:, 1]
-        pointsz = recvbuf[:, 2]
+        # Send assigned seeds to workers
+        for r in worker_ranks:
+            comm.send(assigned[r], dest=r, tag=1)
 
+        # Initialize result buffer
+        result_buffer = np.full((num_seeds, 3), np.nan)
+        pbar = tqdm(total=num_seeds, desc=f"[Rank {rank} Receiving]", position=rank, ncols=80)
+
+        for _ in worker_ranks:
+            worker_results = comm.recv(source=MPI.ANY_SOURCE, tag=2)
+            for i, vec in worker_results:
+                result_buffer[i] = np.asarray(vec, dtype=np.float64).flatten()
+                pbar.update(1)
+
+        pbar.close()
         elapsed_time = time.time() - start_time
-        print(f"Elapsed time: {elapsed_time:.4f} seconds", flush=True)
-        return pointsx, pointsy, pointsz
+        print(f"[Rank 0] Finished in {elapsed_time:.4f} seconds", flush=True)
+
+        return result_buffer[:, 0], result_buffer[:, 1], result_buffer[:, 2]
+
     else:
+        # Worker: receive assigned seeds
+        assigned_seeds = comm.recv(source=0, tag=1)
+
+        local_results = []
+        pbar = tqdm(total=len(assigned_seeds), desc=f"[Rank {rank} Working]", position=rank, ncols=80)
+
+        for i, seed in assigned_seeds:
+            res = reverse_streamtrace_pool(seed, bb_tree=bb_tree, mesh=mesh, uh=uh)
+            result = res if res is not None else (np.nan, np.nan, np.nan)
+            local_results.append((i, result))
+            pbar.update(1)
+
+        pbar.close()
+        comm.send(local_results, dest=0, tag=2)
         return None, None, None
-
-def find_seed_end(rev_pointsy, rev_pointsz, seeds, contour):
-    contour = contour[:, 1:3]
-    # contour[:,[1,0]] = contour[:,[0,1]]
-    valid_seeds = []
-
-    for i in range(seeds.shape[0]):
-        point = np.array([rev_pointsy[i], rev_pointsz[i]])
-        point = point.reshape(1, 2)
-        is_inside = sk.measure.points_in_poly(point, contour)
-
-        if is_inside[0]: # if the point is inside the contour
-            valid_seeds.append(seeds[i])
-    
-    valid_seeds = np.array(valid_seeds)
-
-    valid_seeds = valid_seeds[:, 1:3]
-
-    return valid_seeds
 
 def plot_inlet(contour, inner_mesh, limits):
     if comm.Get_rank() == 0:
@@ -547,6 +532,26 @@ def plot_rev_streamtrace(final_output, limits):
     # plt.show()
 
     return rev_streamtrace_fig
+
+def find_seed_end(rev_pointsy, rev_pointsz, seeds, contour):
+    contour = contour[:, 1:3]
+    # contour[:,[1,0]] = contour[:,[0,1]]
+    valid_seeds = []
+
+    for i in range(seeds.shape[0]):
+        point = np.array([rev_pointsy[i], rev_pointsz[i]])
+        point = point.reshape(1, 2)
+        is_inside = sk.measure.points_in_poly(point, contour)
+
+        if is_inside[0]: # if the point is inside the contour
+            valid_seeds.append(seeds[i])
+    
+    valid_seeds = np.array(valid_seeds)
+
+    valid_seeds = valid_seeds[:, 1:3]
+
+    return valid_seeds
+
 
 def for_and_rev_streamtrace(num_seeds, limits, img_fname, mesh, uh, uvw_data, xyz_data, Re, Folder_name):
     """

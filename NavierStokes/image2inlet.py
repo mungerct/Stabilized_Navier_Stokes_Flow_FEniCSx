@@ -183,8 +183,7 @@ def outer_contour_to_gmsh(contour, mesh_lc, p_idx=1, l_idx=1, loop_idx=1):
     gmsh.write("outer_contour_mesh.msh")
     gmsh.write('outer_contour.geo_unrolled')
 
-    if rank == 0:
-        print('Saved the Outer Contour Mesh', flush = True)
+    print(f'[Rank {rank}] Saved the outer contour mesh', flush = True)
  
     return gmsh.model
 
@@ -214,8 +213,7 @@ def inner_contour_to_gmsh(contour, mesh_lc):
     gmsh.model.mesh.generate(2)
     gmsh.write("inner_contour_mesh.msh")
     gmsh.write('inner_contour.geo_unrolled')
-    if rank == 0:
-        print("Saved the Inner Contour Mesh", flush = True)
+    print(f'[Rank {rank}] Saved the inner contour mesh', flush = True)
     
     return gmsh.model
 
@@ -230,53 +228,53 @@ def process_2_channel_mesh_model(contours):
 
     inner_model = inner_contour_to_gmsh(contour_inner, mesh_lc_a)
     outer_model = outer_contour_to_gmsh(contour_outer, mesh_lc_c)
-    
     return inner_model, outer_model, inner_shape
 
 def image2gmsh(img_fname):
     img = load_image(img_fname)
     contours = get_contours(img)
     inner_model, outer_model, inner_shape = process_2_channel_mesh_model(contours)
-
+    print(f'[Rank {rank}] Finished "image2gmsh"', flush = True)
     return inner_model, outer_model, inner_shape
 
-def solve_velocity_field(gmsh_model):
+def solve_velocity_field(mesh_file: str):
     gdim = 3
-    gmsh_model_rank = 0
-    mesh_comm = MPI.COMM_WORLD
-    msh, cell_markers, facet_markers = gmshio.model_to_mesh(gmsh_model, mesh_comm, gmsh_model_rank, gdim=gdim)
+    comm = MPI.COMM_WORLD
+    rank = comm.Get_rank()
+
+    print(f"[Rank {rank}] Initializing Gmsh and opening mesh file '{mesh_file}'", flush=True)
+    gmsh.initialize()
+    gmsh.option.setNumber("General.Terminal", 0)
+    gmsh.open(mesh_file)
+    print(f"[Rank {rank}] Calling model_to_mesh()", flush=True)
+
+    msh, cell_markers, facet_markers = gmshio.model_to_mesh(gmsh.model, comm, 0, gdim=gdim)
+    gmsh.finalize()
+    print(f"[Rank {rank}] Mesh created", flush=True)
 
     V = fem.functionspace(msh, ("Lagrange", 1))
-    
+
     # Defining an arbitrary forcing function (pressure gradient dp/dx, will normalize all
     # flow to average = 1.0 anyway)
     p = 10
-    
-    # Find mesh area area
     one = fem.Constant(msh, PETSc.ScalarType(1))
-    f = fem.form(one*ufl.dx)
-    area = MPI.COMM_WORLD.allreduce(fem.assemble_scalar(f))
-    #print(f'Area = {area}')
+    area = comm.allreduce(fem.assemble_scalar(fem.form(one * ufl.dx)))
 
-    # Outer no-slip
     noslip = fem.Constant(msh, PETSc.ScalarType(0))
-    dofs = fem.locate_dofs_topological(V, msh.topology.dim-1, facet_markers.find(1))
+    dofs = fem.locate_dofs_topological(V, msh.topology.dim - 1, facet_markers.find(1))
     bc = fem.dirichletbc(noslip, dofs, V)
-    
-    # Define variational problem
+
     u = ufl.TrialFunction(V)
     v = ufl.TestFunction(V)
     a = ufl.dot(ufl.grad(u), ufl.grad(v)) * ufl.dx
     L = p * v * ufl.dx
+
     problem = LinearProblem(a, L, bcs=[bc], petsc_options={"ksp_type": "preonly", "pc_type": "lu"})
     uh = problem.solve()
-    
-    # Compute average velocity
-    f2 = fem.form(uh*ufl.dx)
-    average_velocity = MPI.COMM_WORLD.allreduce(fem.assemble_scalar(f2))/area
-    #print(f'Mean velocity = {average_velocity}')
 
-    
+    f2 = fem.form(uh * ufl.dx)
+    average_velocity = comm.allreduce(fem.assemble_scalar(f2)) / area
+
     # Visualization with PyVista
     #topology, cell_types, x = vtk_mesh(msh, msh.topology.dim)
     #grid = pyvista.UnstructuredGrid(topology, cell_types, x)
@@ -290,23 +288,42 @@ def solve_velocity_field(gmsh_model):
     #    plotter.show()
     #else:
     #    plotter.screenshot("deflection.png") 
-
     return uh, area, average_velocity, msh, V
 
+
 def solve_inlet_profiles(img_fname, flowrate_ratio):
-    # Convert image to meshes and inner shape image
-    inner_model, outer_model, inner_shape = image2gmsh(img_fname)
+    # File paths for saving meshes
+    inner_mesh_file = "inner_contour_mesh.msh"
+    outer_mesh_file = "outer_contour_mesh.msh"
 
-    # Get inner and outer flow profiles
-    inner_model.setCurrent("inner_contour_mesh")
-    uh_1, area_1, average_u_1, msh_1, V_1 = solve_velocity_field(inner_model)
-    outer_model.setCurrent("outer_contour_mesh")
-    uh_2, area_2, average_u_2, msh_2, V_2 = solve_velocity_field(outer_model)
+    if rank == 0:
+        # STEP 1: Generate Gmsh models only on rank 0
+        print("[Rank 0] Starting image2gmsh...", flush=True)
+        inner_model, outer_model, inner_shape = image2gmsh(img_fname)
 
-    # Normalize both velocity profiles by average to get average = 1.0
-    uh_1.x.array[:] = uh_1.x.array[:] / average_u_1
-    uh_2.x.array[:] = uh_2.x.array[:] / average_u_2
+        # Write inner contour mesh to file
+        inner_model.setCurrent("inner_contour_mesh")
+        gmsh.write(inner_mesh_file)
+        print(f"[Rank 0] Wrote {inner_mesh_file}", flush=True)
 
+        # Write outer contour mesh to file
+        outer_model.setCurrent("outer_contour_mesh")
+        gmsh.write(outer_mesh_file)
+        print(f"[Rank 0] Wrote {outer_mesh_file}", flush=True)
+
+    # STEP 2: Barrier to ensure files are written
+    comm.Barrier()
+
+    # STEP 3: Solve on all ranks using the .msh files
+    print(f"[Rank {rank}] Starting 'solve_velocity_field'", flush=True)
+    uh_1, area_1, avg_u_1, msh_1, V_1 = solve_velocity_field(inner_mesh_file)
+    uh_2, area_2, avg_u_2, msh_2, V_2 = solve_velocity_field(outer_mesh_file)
+
+    # STEP 4: Normalize both velocity profiles by average to get average = 1.0
+    uh_1.x.array[:] /= avg_u_1
+    uh_2.x.array[:] /= avg_u_2
+
+    # STEP 5: Scale velocity fields to match flowrate ratio
     # Confirm average = 1.0
     #f1 = fem.form(uh_1*ufl.dx)
     #average_velocity_1 = fem.assemble_scalar(f1)/area_1
@@ -318,24 +335,23 @@ def solve_inlet_profiles(img_fname, flowrate_ratio):
     flow_u_1 = flowrate_ratio / area_1
     flow_u_2 = (1.0 - flowrate_ratio) / area_2
 
-    # Scale velocity fields
-    uh_1.x.array[:] = uh_1.x.array[:] * flow_u_1
-    uh_2.x.array[:] = uh_2.x.array[:] * flow_u_2
+    uh_1.x.array[:] *= flow_u_1
+    uh_2.x.array[:] *= flow_u_2
 
+    print(f"[Rank {rank}] Finished 'solve_inlet_profiles'", flush=True)
     # Confirm new average velocity
     #f1 = fem.form(uh_1*ufl.dx)
     #average_velocity_1 = fem.assemble_scalar(f1)/area_1
     #f2 = fem.form(uh_2*ufl.dx)
     #average_velocity_2 = fem.assemble_scalar(f2)/area_2
 
-
     # Get coordinates of each velocity field to interpolate onto common grid
     #coor_1 = V_1.tabulate_dof_coordinates()
     #u_1 = uh_1.x.array.real.astype(np.float32)
     #coor_2 = V_2.tabulate_dof_coordinates()
     #u_2 = uh_2.x.array.real.astype(np.float32)
-
     return uh_1, msh_1, uh_2, msh_2
+
 
 def create_inner_shape(contour_points):
     # Fill image with inner flow shape

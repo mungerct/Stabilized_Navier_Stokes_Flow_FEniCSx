@@ -164,6 +164,7 @@ def write_contour_to_file(contour, fname):
 def gmsh_3D_extrusion_to_gmsh(mesh_lc, inner_contour, outer_contour, x_outlet, x_extrude, p_idx=1, l_idx=1, loop_idx=1, surf_idx=1):
 
     gmsh.initialize()
+    gmsh.option.setNumber("General.Terminal", 0)
     gmsh.model.add("gmsh_3D_flow")
     g = gmsh.model.occ
     gmsh.option.setNumber("Geometry.OCCAutoFix", 0) # Needed to remove redundant surface, not sure what's going on

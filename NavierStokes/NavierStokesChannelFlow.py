@@ -311,71 +311,158 @@ def solve_navier_stokes(a, w, dF, bcs, W, snes_ksp_type, comm, rank):
     p = w.sub(1).collapse()
     return w, u, p
 
-def save_navier_stokes_solution(u, p, msh, FolderName, Re):
+from dolfinx.io import XDMFFile
+
+def save_navier_stokes_solution(u, p, msh, FolderName, Re, comm, rank):
+    if rank == 0:
+        print(f"[Rank {rank}] Starting save_navier_stokes_solution()", flush=True)
 
     u.x.scatter_forward()
     p.x.scatter_forward()
-    if rank == 0:
-        print('Writing solution', flush=True)
 
-    with XDMFFile(MPI.COMM_WORLD, f"{FolderName}/Re{Re}ChannelPressure.xdmf", "w") as pfile_xdmf:
-        P3 = VectorElement("Lagrange", msh.basix_cell(), 1)
-        p_out = Function(functionspace(msh, P3))
-        p_out.interpolate(p)
+    # Interpolate on all ranks (parallel)
+    P3 = VectorElement("Lagrange", msh.basix_cell(), 1)
+    p_out = Function(functionspace(msh, P3))
+    p_out.interpolate(p)
+
+    P4 = VectorElement("Lagrange", msh.basix_cell(), 1, shape=(msh.geometry.dim,))
+    u_out = Function(functionspace(msh, P4))
+    u_out.interpolate(u)
+
+    # Open XDMF files in parallel (using comm, not MPI.COMM_SELF)
+    with XDMFFile(comm, f"{FolderName}/Re{Re}ChannelPressure.xdmf", "w") as pfile_xdmf:
         p_out.name = "Pressure"
         pfile_xdmf.write_mesh(msh)
         pfile_xdmf.write_function(p_out)
 
-    with XDMFFile(MPI.COMM_WORLD, f"{FolderName}/Re{Re}ChannelVelocity.xdmf", "w") as ufile_xdmf:
-        P4 = VectorElement("Lagrange", msh.basix_cell(), 1, shape=(msh.geometry.dim,))
-        u_out = Function(functionspace(msh, P4))
-        u_out.interpolate(u)
+    with XDMFFile(comm, f"{FolderName}/Re{Re}ChannelVelocity.xdmf", "w") as ufile_xdmf:
         u_out.name = "Velocity"
         ufile_xdmf.write_mesh(msh)
         ufile_xdmf.write_function(u_out)
+    if rank == 0:
+        print(f"[Rank {rank}] Solution writing complete.", flush=True)
 
-def write_run_metadata(FolderName, Re, img_fname, flowrate_ratio, channel_mesh_size, V, Q, img_name):
-    with open(f"{FolderName}/RunParameters.txt", "w") as file:
-        file.write(f"Re={Re}\n")
-        file.write(f"img_filename={img_fname}\n")
-        file.write(f"Flowrate Ratio={flowrate_ratio}\n")
-        file.write(f"Channel Mesh Size={channel_mesh_size}\n")
-        file.write(f"Pressure DOFs: {Q.dofmap.index_map.size_local}\n")
-        file.write(f"Velocity DOFs: {V.dofmap.index_map.size_local}\n")
-        file.write(f"{comm.Get_size()} Cores Used\n")
-    
-    img = Image.open(img_fname)
-    os.chdir(FolderName)
-    img.save(f"{img_name}.png", format="PNG")
+    # Barrier to synchronize all ranks before proceeding
+    comm.Barrier()
+
+'''
+def save_navier_stokes_solution(u, p, msh, FolderName, Re, comm, rank):
+    print(f"[Rank {rank}] Starting save_navier_stokes_solution()", flush=True)
+
+    u.x.scatter_forward()
+    p.x.scatter_forward()
+
+    # Interpolate in parallel on all ranks
+    P3 = VectorElement("Lagrange", msh.basix_cell(), 1)
+    p_out = Function(functionspace(msh, P3))
+    p_out.interpolate(p)
+
+    P4 = VectorElement("Lagrange", msh.basix_cell(), 1, shape=(msh.geometry.dim,))
+    u_out = Function(functionspace(msh, P4))
+    u_out.interpolate(u)
+    if rank == 0:
+        with XDMFFile(MPI.COMM_SELF, f"{FolderName}/Re{Re}ChannelPressure.xdmf", "w") as pfile_xdmf:
+            p_out.name = "Pressure"
+            pfile_xdmf.write_mesh(msh)
+            pfile_xdmf.write_function(p_out)
+
+        with XDMFFile(MPI.COMM_SELF, f"{FolderName}/Re{Re}ChannelVelocity.xdmf", "w") as ufile_xdmf:
+            u_out.name = "Velocity"
+            ufile_xdmf.write_mesh(msh)
+            ufile_xdmf.write_function(u_out)
+
+        print(f"[Rank {rank}] Solution writing complete.", flush=True)
+    else:
+        print(f"[Rank {rank}] Skipping file write", flush=True)
+
+    # Optional: Add a barrier to sync all ranks here if you want to make sure all finish before continuing
+    print(f"[Rank {rank}] Before final MPI Barrier", flush=True)
+    comm.Barrier()
+    print(f"[Rank {rank}] After final MPI Barrier", flush=True)
+'''
+
+def write_run_metadata(FolderName, Re, img_fname, flowrate_ratio, channel_mesh_size, V, Q, img_name, comm, rank):
+    if rank == 0:
+        import os
+        from PIL import Image
+
+        try:
+            # Write metadata file
+            filepath = os.path.join(FolderName, "RunParameters.txt")
+            with open(filepath, "w") as file:
+                file.write(f"Re={Re}\n")
+                file.write(f"img_filename={img_fname}\n")
+                file.write(f"Flowrate Ratio={flowrate_ratio}\n")
+                file.write(f"Channel Mesh Size={channel_mesh_size}\n")
+                file.write(f"Pressure DOFs: {Q.dofmap.index_map.size_local}\n")
+                file.write(f"Velocity DOFs: {V.dofmap.index_map.size_local}\n")
+                file.write(f"{comm.Get_size()} Cores Used\n")
+
+            # Save image copy in output folder
+            img = Image.open(img_fname)
+            save_path = os.path.join(FolderName, f"{img_name}.png")
+            img.save(save_path, format="PNG")
+
+            print(f"[Rank {rank}] Run metadata and image saved to {FolderName}")
+        except Exception as e:
+            print(f"[Rank {rank}] ERROR in write_run_metadata: {e}")
+            raise
+    else:
+        # Other ranks do nothing here
+        pass
 
 
-def make_output_folder(Re, img_fname, channel_mesh_size):
-    """
-    Create and set up an output folder for storing simulation results.
+def make_output_folder(Re, img_fname, channel_mesh_size, comm, rank):
+    import os
 
-    Parameters:
-        Re (int): Reynolds number used in the simulation.
-        img_fname (str): Full path to the input image file (should end with '.png').
-        channel_mesh_size (float): Mesh size for the channel flow simulation (1 is defined as the width of the channel)
+    # Only rank 0 changes directories and creates folders
+    if rank == 0:
+        try:
+            cwd = os.getcwd()
 
-    Returns:
-        tuple:
-            folder_name (str): Name of the created output directory.
-            img_name (str): Processed image filename used in the folder name.
-    """
-    # Create output folder
-    img_name = img_fname.removesuffix(".png")
-    img_name = img_name.removeprefix(os.getcwd())
-    img_name = img_name.removeprefix("/InletImages/")
-    channel_mesh_size_str = str(channel_mesh_size)
-    channel_mesh_size_str = channel_mesh_size_str.replace(".", "")
+            # Safely remove suffix/prefix (compatible with older Python)
+            if img_fname.endswith(".png"):
+                img_name = img_fname[:-4]
+            else:
+                img_name = img_fname
 
+            # Remove current working directory and "/InletImages/" prefix if present
+            if img_name.startswith(cwd):
+                img_name = img_name[len(cwd):]
+            if img_name.startswith("/InletImages/"):
+                img_name = img_name[len("/InletImages/"):]
 
-    os.chdir(os.path.join(os.getcwd(), 'noether_data'))
-    folder_name = f'NSChannelFlow_RE{Re}_MeshLC{channel_mesh_size_str}_{img_name}' # Make folder to store results
-    create_output_directory(folder_name, rank)
+            # Sanitize channel_mesh_size string
+            channel_mesh_size_str = str(channel_mesh_size).replace(".", "")
 
-    return folder_name, img_name
+            # Change directory once, check if exists
+            noether_path = os.path.join(cwd, 'noether_data')
+            if not os.path.isdir(noether_path):
+                os.makedirs(noether_path)
+            os.chdir(noether_path)
+
+            folder_name = f'NSChannelFlow_RE{Re}_MeshLC{channel_mesh_size_str}_{img_name}'
+            
+            # Create folder if not exists
+            if not os.path.exists(folder_name):
+                os.makedirs(folder_name)
+
+            # Return full folder path relative to cwd
+            full_folder_path = os.path.join(noether_path, folder_name)
+
+        except Exception as e:
+            print(f"[Rank {rank}] ERROR in make_output_folder: {e}")
+            raise
+    else:
+        full_folder_path = None
+        img_name = None
+
+    # Broadcast folder path and img_name to all ranks
+    full_folder_path = comm.bcast(full_folder_path, root=0)
+    img_name = comm.bcast(img_name, root=0)
+
+    return full_folder_path, img_name
+
 
 def solve_NS_flow():
     """

@@ -402,10 +402,11 @@ def write_run_metadata(FolderName, Re, img_fname, flowrate_ratio, channel_mesh_s
             img = Image.open(img_fname)
             save_path = os.path.join(FolderName, f"{img_name}.png")
             img.save(save_path, format="PNG")
-
-            print(f"[Rank {rank}] Run metadata and image saved to {FolderName}")
+            if rank == 0:
+                print(f"[Rank {rank}] Run metadata and image saved to {FolderName}")
         except Exception as e:
-            print(f"[Rank {rank}] ERROR in write_run_metadata: {e}")
+            if rank == 0:
+                print(f"[Rank {rank}] ERROR in write_run_metadata: {e}")
             raise
     else:
         # Other ranks do nothing here

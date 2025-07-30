@@ -284,5 +284,6 @@ dependencies:
       - scipy==1.16.0
       - shapely==2.1.1
       - tifffile==2025.6.11
+      - tqdm==4.67.1
       - trimesh==4.7.1
 prefix: /home/mungerct/anaconda3/envs/fenicsx-env

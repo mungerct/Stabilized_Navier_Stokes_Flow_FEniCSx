@@ -38,7 +38,7 @@ def save_figs(img_fname, inner_contour_fig, inner_contour_mesh_fig, seeds, final
 
 def run_trace_save():
     try:
-        num_seeds = 400
+        num_seeds = 200
         limits = 1
         if rank == 0:
             print(f"[Rank {rank}] Starting solve_NS_flow()...", flush=True)
